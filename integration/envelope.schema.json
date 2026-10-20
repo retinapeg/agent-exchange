@@ -1,0 +1,230 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:leo:integration:v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "message_id",
+    "trace_id",
+    "correlation_id",
+    "causation_id",
+    "source",
+    "target",
+    "kind",
+    "created_at",
+    "deadline_at",
+    "idempotency_key",
+    "payload"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "leo.integration.v1"
+    },
+    "message_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "trace_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "correlation_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "causation_id": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "uuid"
+    },
+    "source": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 80
+    },
+    "target": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 80
+    },
+    "kind": {
+      "enum": [
+        "task.requested",
+        "task.progress",
+        "task.completed",
+        "task.failed",
+        "task.cancel.requested",
+        "task.cancelled",
+        "approval.requested"
+      ]
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "Z$"
+    },
+    "deadline_at": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "date-time",
+      "pattern": "Z$"
+    },
+    "idempotency_key": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "payload": {
+      "type": "object"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "task.requested"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "provider",
+              "task"
+            ],
+            "properties": {
+              "provider": {
+                "type": "string"
+              },
+              "task": {
+                "type": "object"
+              },
+              "payment_mode": {
+                "const": "free"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "task.cancel.requested"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "provider",
+              "task_id"
+            ],
+            "properties": {
+              "provider": {
+                "type": "string"
+              },
+              "task_id": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "enum": [
+              "task.progress",
+              "task.completed",
+              "task.failed",
+              "task.cancelled"
+            ]
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "provider",
+              "task",
+              "verifier"
+            ],
+            "properties": {
+              "provider": {
+                "type": "string"
+              },
+              "task": {
+                "type": "object"
+              },
+              "verifier": {
+                "type": [
+                  "object",
+                  "null"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "approval.requested"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "capability",
+              "reason"
+            ],
+            "properties": {
+              "capability": {
+                "type": "string"
+              },
+              "reason": {
+                "type": "string"
+              },
+              "approval_id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "binding": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              },
+              "preview": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
+}

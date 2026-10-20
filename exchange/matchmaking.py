@@ -1,0 +1,139 @@
+"""Synthetic developer introductions with explicit field disclosure and bilateral consent."""
+import hmac
+import json
+import secrets
+from itertools import combinations
+
+from fastapi import Request, HTTPException
+from pydantic import BaseModel, ConfigDict, Field
+
+from exchange.common import Database, canonical, digest, uid
+from exchange.failures import ExchangeFailure
+
+FIELDS = {'interests', 'goals', 'availability', 'communication', 'timezone'}
+PURPOSE = 'developer-introduction'
+
+
+class Profile(BaseModel):
+    model_config = ConfigDict(extra='forbid', strict=True)
+    interests: list[str] = Field(max_length=20)
+    goals: list[str] = Field(max_length=20)
+    availability: list[str] = Field(max_length=20)
+    communication: list[str] = Field(max_length=20)
+    timezone: str = Field(max_length=50)
+
+
+def propose(profiles):
+    if not isinstance(profiles, list) or len(profiles) > 40:
+        raise ValueError('up to 40 approved outward-facing profiles required')
+    ids = set()
+    for p in profiles:
+        if not isinstance(p, dict) or set(p) - (FIELDS | {'id'}) or not isinstance(p.get('id'), str) or p['id'] in ids:
+            raise ValueError('invalid or duplicate outward profile')
+        ids.add(p['id'])
+        Profile.model_validate({k: p.get(k, [] if k != 'timezone' else '') for k in FIELDS})
+    pairs = []
+    for a, b in combinations(profiles, 2):
+        overlap = sorted(set(a.get('interests', [])) & set(b.get('interests', [])))
+        goals = sorted(set(a.get('goals', [])) & set(b.get('goals', [])))
+        available = sorted(set(a.get('availability', [])) & set(b.get('availability', [])))
+        communication = sorted(set(a.get('communication', [])) & set(b.get('communication', [])))
+        if overlap and goals and available and communication:
+            pairs.append({'participants': sorted([a['id'], b['id']]), 'shared_interests': overlap,
+                          'shared_goals': goals, 'availability': available, 'communication': communication,
+                          'status': 'proposal-only', 'contact_disclosed': False})
+    return {'purpose': PURPOSE, 'proposals': sorted(pairs, key=lambda p: p['participants']), 'identity': 'synthetic pseudonymous; not anonymous',
+            'consent': 'separate explicit consent from both profile owners required'}
+
+
+class DisclosureStore(Database):
+    def __init__(self, path):
+        super().__init__(path)
+        with self.tx() as db:
+            db.executescript('''
+            CREATE TABLE IF NOT EXISTS profiles(id TEXT PRIMARY KEY, fields TEXT, approved TEXT, contact TEXT, token_hash TEXT, revoked INTEGER DEFAULT 0);
+            CREATE TABLE IF NOT EXISTS consents(pair TEXT, profile_id TEXT, approved INTEGER, PRIMARY KEY(pair,profile_id));
+            ''')
+        path.chmod(0o600)
+
+    def create(self, profile, approved_fields, contact, purpose):
+        Profile.model_validate(profile)
+        if purpose != PURPOSE or not isinstance(approved_fields, list) or not set(approved_fields) <= FIELDS:
+            raise ExchangeFailure('policy', 'invalid disclosure purpose or fields')
+        if not isinstance(contact, str) or not contact.endswith('@example.invalid'):
+            raise ExchangeFailure('policy', 'synthetic example.invalid contact required')
+        identity, token = uid(), secrets.token_urlsafe(32)
+        with self.tx() as db:
+            db.execute('INSERT INTO profiles VALUES(?,?,?,?,?,0)', (identity, canonical(profile).decode(), canonical(approved_fields).decode(), contact, digest(token.encode())))
+        return {'id': identity, 'owner_consent_token': token, 'disclosure_preview': {k: v for k, v in profile.items() if k in approved_fields}, 'purpose': PURPOSE}
+
+    def outward(self, purpose=PURPOSE):
+        if purpose != PURPOSE:
+            raise ExchangeFailure('policy', 'purpose restriction')
+        with self.connect() as db:
+            rows = db.execute('SELECT * FROM profiles WHERE revoked=0').fetchall()
+        return [{'id': r['id'], **{k: v for k, v in json.loads(r['fields']).items() if k in json.loads(r['approved'])}} for r in rows]
+
+    def consent(self, identity, other, token, approved, purpose=PURPOSE):
+        if purpose != PURPOSE or type(approved) is not bool or identity == other:
+            raise ExchangeFailure('policy', 'invalid consent')
+        pair = canonical(sorted([identity, other])).decode()
+        with self.tx() as db:
+            rows = db.execute('SELECT * FROM profiles WHERE id IN (?,?) AND revoked=0', (identity, other)).fetchall()
+            owner = next((r for r in rows if r['id'] == identity), None)
+            if len(rows) != 2 or not owner or not hmac.compare_digest(owner['token_hash'], digest(token.encode())):
+                raise HTTPException(403, 'profile-owner authorization required')
+            db.execute('INSERT INTO consents VALUES(?,?,?) ON CONFLICT(pair,profile_id) DO UPDATE SET approved=excluded.approved', (pair, identity, int(approved)))
+        return {'consent_recorded': approved, 'profile_id': identity}
+
+    def contacts(self, identity, other, token):
+        pair = canonical(sorted([identity, other])).decode()
+        with self.connect() as db:
+            rows = db.execute('SELECT * FROM profiles WHERE id IN (?,?) AND revoked=0', (identity, other)).fetchall()
+            owner = next((r for r in rows if r['id'] == identity), None)
+            consent = db.execute('SELECT COUNT(*) FROM consents WHERE pair=? AND approved=1', (pair,)).fetchone()[0]
+        if len(rows) != 2 or consent != 2 or not owner or not hmac.compare_digest(owner['token_hash'], digest(token.encode())):
+            raise HTTPException(403, 'bilateral owner consent required')
+        return {'purpose': PURPOSE, 'contacts': {r['id']: r['contact'] for r in rows}}
+
+    def revoke(self, identity, token):
+        with self.tx() as db:
+            row = db.execute('SELECT token_hash FROM profiles WHERE id=?', (identity,)).fetchone()
+            if not row or not hmac.compare_digest(row[0], digest(token.encode())):
+                raise HTTPException(403)
+            db.execute("UPDATE profiles SET revoked=1,fields='{}',approved='[]',contact='' WHERE id=?", (identity,))
+            db.execute('DELETE FROM consents WHERE profile_id=?', (identity,))
+        return {'revoked': identity, 'limitation': 'cannot retract copies previously received by another party'}
+
+
+def add_disclosures(app, path):
+    store = DisclosureStore(path)
+
+    def operator(request):
+        if request.state.principal != 'operator':
+            raise HTTPException(403, 'agents cannot grant human consent')
+
+    @app.post('/disclosures')
+    async def create(request: Request):
+        operator(request)
+        value = await request.json()
+        return store.create(value['profile'], value['approved_fields'], value['contact'], value['purpose'])
+
+    @app.get('/disclosures')
+    async def outward(request: Request):
+        if request.state.principal not in ('operator', 'buyer'):
+            raise HTTPException(403)
+        return {'profiles': store.outward(), 'purpose': PURPOSE}
+
+    @app.post('/disclosures/{identity}/{action}')
+    async def update(identity: str, action: str, request: Request):
+        operator(request)
+        token = request.headers.get('x-profile-consent', '')
+        value = await request.json()
+        if action == 'revoke':
+            return store.revoke(identity, token)
+        if action == 'consent':
+            return store.consent(identity, value['other'], token, value['approved'], value['purpose'])
+        if action == 'contacts':
+            return store.contacts(identity, value['other'], token)
+        raise HTTPException(404)

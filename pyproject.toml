@@ -1,0 +1,37 @@
+[project]
+name = "agent-exchange"
+version = "0.1.0"
+description = "Local, observable A2A collaboration and payment experiments"
+requires-python = ">=3.12"
+dependencies = [
+  "a2a-sdk[http-server]==1.2.3",
+  "x402[evm]==2.25.0",
+  "mcp==2.3.0",
+  "fastapi==0.150.0",
+  "uvicorn==0.54.0",
+  "httpx==0.28.1",
+  "psutil==7.2.2",
+  "jsonschema==4.26.0",
+]
+
+[dependency-groups]
+dev = [
+    "playwright==1.64.0",
+    "pytest==9.1.1",
+    "pytest-asyncio==1.3.0",
+]
+
+[project.scripts]
+exchange = "exchange.cli:main"
+
+[build-system]
+requires = ["hatchling==1.30.1"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["exchange"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+addopts = "--tb=short --basetemp=.cache/pytest"
+testpaths = ["tests"]

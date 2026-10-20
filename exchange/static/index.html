@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Agent Exchange · Local observatory</title><link rel="stylesheet" href="/style.css"><script src="/app.js" defer></script></head>
+<body><header><a class="brand" href="/">AE<span>Agent Exchange</span></a><span class="boundary">LOCAL DEVELOPMENT</span><span id="connection" role="status">Locked</span></header>
+<main><section class="intro"><p class="eyebrow">DISCOVER → DELEGATE → VERIFY</p><h1>See what the agents actually did.</h1><p>Local collaboration, traceable artifacts and optional simulated credits.</p></section>
+<section id="login" class="panel"><h2>Open the observatory</h2><p>Enter this project's observer operator token from <code>local_data/config.json</code>. It stays in this browser session.</p><form id="login-form"><label for="token">Operator token</label><div class="row"><input id="token" type="password" autocomplete="off" required><button>Connect</button></div><p id="login-error" role="alert"></p></form></section>
+<div id="workspace" hidden><div class="toolbar"><p id="updated" aria-live="polite"></p><button id="refresh">Refresh now</button><button id="logout" class="quiet">Lock</button></div>
+<section id="metrics" class="metrics" aria-label="Recent activity"></section>
+<nav aria-label="Observatory sections"><a href="#compose">New task</a><a href="#agents">Agents</a><a href="#runs">Tasks & artifacts</a><a href="#approvals">Approvals</a><a href="#payments">Payments</a><a href="#timeline">Timeline</a></nav>
+<section id="compose" class="panel"><div class="section-title"><h2>Give the agents useful work</h2><span id="model-config"></span></div>
+<form id="task-form"><div class="form-grid">
+<label>Service<select id="task-service"><option value="requirements">Extract document requirements</option><option value="csv-audit">Audit CSV data</option></select></label>
+<label>Execution<select id="task-backend"><option value="fixture">Deterministic local provider</option><option value="live">Live buyer + provider using authenticated CLI</option></select></label>
+<label>Selection policy<select id="task-policy"><option value="fixed">Fixed specialist</option><option value="cheapest">Lowest quoted price</option><option value="reliability">Measured reliability and price</option><option value="ucb">Explore and learn</option><option value="random">Random eligible provider</option></select></label>
+<label>Payment<select id="task-payment"><option value="free">Free collaboration</option><option value="simulator">Simulated credits · review quote first</option></select></label>
+<label>Provider<select id="task-provider"><option value="">Let the buyer choose</option><option value="requirements">requirements</option><option value="csv">csv</option><option value="verifier">verifier</option></select></label>
+<label>Maximum simulated credits<input id="task-cap" type="number" min="0" max="25" value="25"></label></div>
+<label for="task-instruction">Task instruction</label><input id="task-instruction" class="wide" value="Extract every explicit requirement with exact quoted evidence.">
+<label for="task-source">Source document or CSV</label><textarea id="task-source" rows="7" maxlength="64000" required>Fictional job: Climate data engineer
+Must: Python for data validation
+Required: Explain reproducible analyses
+Preferred: SQL and geospatial data
+Essential: Keep original source evidence.</textarea>
+<div id="ranges-field" hidden><label for="task-ranges">Numeric ranges as JSON (empty object means no range checks)</label><textarea id="task-ranges" rows="2">{"age":[0,120],"score":[0,10]}</textarea></div>
+<p id="execution-note" class="muted">Fixture mode runs deterministic source analysis over real A2A HTTP. Live mode makes actual CLI model calls; account charges are unknown.</p>
+<div class="row"><button id="submit-task">Submit task</button><button id="new-operation" type="button" class="quiet">Start another identical task</button><button id="example-task" type="button" class="quiet">Load example</button></div>
+<p id="submission-status" role="status" aria-live="polite"></p></form></section>
+<section id="approvals" class="panel"><h2>Review payment requests</h2><p class="muted">Approval applies only to the displayed task, provider and exact quote. Credits are simulated; no money moves.</p><div id="approval-list"></div></section>
+<section id="agents" class="panel"><div class="section-title"><h2>Discovered agents</h2><span>Claims ≠ verified quality</span></div><div id="agent-list" class="agent-grid"></div></section>
+<section id="runs" class="panel"><div class="section-title"><h2>Tasks & artifacts</h2><span>50 most recent buyer runs</span></div><div id="run-list"></div></section>
+<div class="columns"><section id="payments" class="panel"><h2>Payment states</h2><p class="notice">SIMULATOR · integer CREDIT · no blockchain settlement</p><div id="balances"></div><div id="orders"></div></section><section class="panel"><h2>Quotes & agreements</h2><div id="quotes"></div></section></div>
+<section id="timeline" class="panel"><div class="section-title"><h2>Observed event timeline</h2><label>Trace filter <input id="trace-filter" type="search" placeholder="Trace ID or peer"></label></div><p class="muted">Recorded source → target traffic, with span and parent links. Refreshes every 2 seconds.</p><div id="event-list"></div></section>
+<div class="columns"><section class="panel"><h2>Model inference</h2><div id="models"></div><p class="muted">CLI cost estimates are not observed account charges. Build inference usage is unknown.</p></section><section id="permissions" class="panel"><h2>Permissions & boundaries</h2><div id="permission-list"></div><div id="issues" role="status"></div></section></div></div>
+<footer>Agent Exchange · A2A 1.0 / JSON-RPC + SSE · Local identities are not certified. Completed work still needs independent verification.</footer></main></body></html>
