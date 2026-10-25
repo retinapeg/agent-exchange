@@ -238,3 +238,75 @@ longer picks w = 1/4 (that came from the other order).
 - Proxy links between protected attributes and employer, school or city are not modelled.
 - Invented population and compatibility model, fixture agents; not real-user outcomes. No live
   run (`--provider claude`) occurred.
+
+# Match simulation v3: availability granularity
+
+Plan `23daade3c0932ad9`, frozen in `EXPERIMENT_PROTOCOL.md` ("match-sim v3: availability
+granularity") before this run. Same held-out seeds 1000–1009 and population. L0 reproduces every
+v2.1 number exactly. Each level coarsens the approved card before anyone sees it; the adversary is
+retrained per level, so it knows the coarsening. Columns are for the hybrid matcher (card plus gated
+Q&A). Intervals are seed bootstrap 95% CIs (10,000 replicates).
+
+## v3 results
+
+| Level | Health log-loss gain | Health AUC | Hybrid precision@5 | vs L0 | Gate block rate | Proposals/seed |
+|---|---|---|---|---|---|---|
+| L0 exact (v2.1) | **+0.022 [0.011, 0.033]** | **0.649 [0.617, 0.681]** | 0.418 [0.402, 0.432] | — | 3.0% [2.9, 3.1] | 785 |
+| L1 day-part | −0.005 [−0.011, 0.002] | **0.546 [0.523, 0.569]** | 0.327 [0.318, 0.337] | −0.091 [−0.103, −0.079] | 3.0% [2.9, 3.1] | 1,559 |
+| L2 weekday/weekend | −0.011 [−0.018, −0.004] | **0.526 [0.501, 0.552]** | 0.340 [0.329, 0.349] | −0.078 [−0.093, −0.064] | 3.0% [2.9, 3.1] | 1,450 |
+| L3 removed | −0.019 [−0.025, −0.014] | 0.478 [0.457, 0.498] | 0.313 [0.301, 0.323] | −0.105 [−0.121, −0.091] | 3.0% [2.9, 3.1] | 1,810 |
+
+Bold: an interval that excludes no-signal on the leaking side. All levels: 0 constraint
+violations, 0 canaries in any output, 0 canaries on disk. For reference, the constrained matcher at
+L0 scores 0.394.
+
+## Decision
+
+**Default: L3, availability removed.** No level passed the pre-registered rule, so L3 is the
+default through its fallback clause ("if none qualifies except L3, the default is L3"):
+
+- L1 and L2 still show health signal: their AUC intervals sit above 0.5 (L2 only just, from 0.501).
+  Week-part still leaks because a person with a condition is more often weekday-only.
+- L3 nominally fails too, but on the other side. Its gain interval is below 0 and its AUC interval
+  is below 0.5. That is not leakage: health is independent of every remaining card field by
+  construction (see the caveats).
+
+The choice does not depend on that two-sided wording. If only leakage counts (gain above 0 or AUC
+above 0.5), L1 and L2 still fail on AUC and L3 passes, so the default is still L3.
+
+Applied in `exchange/matchmaking.py`:
+
+- `AVAILABILITY_DEFAULT = 'none'`; `DisclosureStore.create` drops availability before storing, so
+  the disclosure preview and outward profiles never contain it.
+- `availability` is optional in `Profile`.
+- `propose` and the independent verifier (`exchange/verification.py`) require shared availability
+  only when both cards state it.
+- The simulation still passes each level explicitly. Applying the default changed a source digest;
+  the rerun under plan `87a1cc8bc63a9a15` reproduces this table and the L0 detail exactly.
+
+## Cost
+
+Privacy costs precision here. Removing availability lowers hybrid precision@5 by 0.105, to 0.313,
+which is below the L0 constrained matcher (0.394). The hidden compatibility model rewards exact
+shared availability, and without it the hard constraint stops filtering: hybrid proposals per seed
+more than double. L2 keeps the most precision of the coarse levels (0.340) but still leaks
+slightly. The gate block rate is 3.0% at every level; it is the fixture's careless-answer rate,
+which coarsening does not change. At L3, availability questions are declined instead of answered.
+
+## Caveats
+
+- Everything is fixture agents on an invented population. The health-to-availability link (60% of
+  people with a condition pick weekday-daytime) and the precision cost (the hidden model weights
+  exact availability) are both made up. Real data could show more or less of either.
+- Negative gains at L1–L3 mean the adversary is miscalibrated, not that it learns something. It
+  chose likelihood weight 1/2 on development seed 2 at every level; on held-out seeds that weight
+  fits noise and loses to the prior. The v2.1 measure assumes this weight selection holds up; at
+  coarse levels it does not.
+- L3's AUC interval (0.457–0.498) excludes 0.5 although nothing on the card relates to health.
+  The intervals cover seed-to-seed variation for one trained adversary, not variation in its
+  training, so they are probably too narrow. Treat edges near the null (L2's 0.501, L3's 0.498)
+  as inconclusive.
+- The rule weighs privacy only. A different rule could accept L2's small residual signal for
+  +0.027 precision@5 over L3; that would be a new protocol, not a reading of this one.
+- The A2A `match` service still scores whatever profiles a caller sends, availability included;
+  the default applies where profiles are stored (`DisclosureStore`).
