@@ -197,3 +197,15 @@ measures are recomputed unchanged and must reproduce the frozen v2 numbers.
     Politics picks w = 1/4 and shows about ±0.003 noise.
 - Table additions to `./exchange.sh match-sim`: an (a) block and a (b) block; shareable attributes
   are marked as expected.
+
+### v2.1 amendment: deterministic consent draws
+
+Added before the scored rerun that the report uses. The fixture owner agent drew consent for its
+optional fields by iterating over a Python set, whose order changes between processes. The first
+v2.1 run (plan `28a601e1e8192539`) and the v2 run both happened to use the order school, then
+employer. The code now fixes that order, so it reproduces both runs in every process; a test
+checks this under four hash seeds. No measure or constant changes. Under the fixed code the
+sanity checks on unseen seeds 5–7 read: planted health gain +0.59, AUC 1.00; daytime hint gain
++0.020 to +0.044, AUC 0.64 to 0.72 (availability removed: gain −0.014 to +0.004, AUC 0.48 to
+0.57); all five independent protected controls choose w = 0 with gain 0. The earlier note that
+politics picks w = 1/4 came from the other set order and no longer applies.
