@@ -160,3 +160,81 @@ because editing it would change the plan hash.
   route for inference is untested.
 - Invented population and compatibility model, fixture agents; not real-user outcomes. No live
   run (`--provider claude`) occurred.
+
+# Match simulation v2.1 metrics
+
+Plan `f9f2a261cef174cd`, frozen in `EXPERIMENT_PROTOCOL.md` ("match-sim v2.1 metrics" and its
+amendment) before this run. Same held-out seeds 1000–1009 and the same v2 population; all v2
+measures reproduce exactly. Intervals are paired bootstrap 95% CIs: resample the 10 seeds with
+replacement, 10,000 replicates. Raw records: `local_data/experiments/match-sim-f9f2a261cef174cd/`.
+
+## (a) Precision@5 differences between matchers
+
+| Comparison | Difference in precision@5 |
+|---|---|
+| panel − constrained | +0.012 [0.003, 0.021] |
+| hybrid − constrained | +0.023 [0.019, 0.028] |
+| hybrid − panel | +0.012 [0.002, 0.022] |
+
+All three intervals exclude 0: hybrid ranks best, then panel, then constrained. The gains are
+small, about 1 to 2 points of precision@5.
+
+## (b) Weak-signal leakage
+
+Log-loss gain is how much better (in nats per person) the adversary's probabilities predict the
+true value than the development prior does: 0 means no usable signal. AUC applies to binary
+attributes only (health: condition vs none); 0.5 means no signal. The matcher columns are
+identical because all three expose the same information.
+
+| Attribute | Measure | constrained | panel | hybrid |
+|---|---|---|---|---|
+| health | log-loss gain | **+0.022 [0.011, 0.033]** | +0.022 [0.011, 0.033] | +0.022 [0.010, 0.032] |
+| health | AUC | **0.649 [0.617, 0.681]** | 0.649 [0.617, 0.680] | 0.649 [0.617, 0.681] |
+| sexuality | log-loss gain | 0.000 [0.000, 0.000] | 0.000 [0.000, 0.000] | 0.000 [0.000, 0.000] |
+| religion | log-loss gain | 0.000 [0.000, 0.000] | 0.000 [0.000, 0.000] | 0.000 [0.000, 0.000] |
+| politics | log-loss gain | 0.000 [0.000, 0.000] | 0.000 [0.000, 0.000] | 0.000 [0.000, 0.000] |
+| ethnicity | log-loss gain | 0.000 [0.000, 0.000] | 0.000 [0.000, 0.000] | 0.000 [0.000, 0.000] |
+| address (home area) | log-loss gain | 0.000 [0.000, 0.000] | 0.000 [0.000, 0.000] | 0.000 [0.000, 0.000] |
+| employer (expected, consented) | log-loss gain | +1.326 [1.293, 1.358] | +1.326 [1.294, 1.358] | +1.326 [1.294, 1.358] |
+| school (expected, consented) | log-loss gain | +0.741 [0.710, 0.775] | +0.741 [0.710, 0.775] | +0.741 [0.710, 0.774] |
+| city (expected, consented) | log-loss gain | +1.346 [1.318, 1.375] | +1.346 [1.319, 1.374] | +1.346 [1.318, 1.375] |
+
+(The CLI prints ethnicity as −0.000; the exact value is about 1e-16, rounding error.)
+
+**Health leaks a little, through availability.** The v2 accuracy measure read 0.000, but v2.1
+detects the built-in hint: a small positive log-loss gain and AUC about 0.65, both with intervals
+clear of no-signal. An adversary that sees someone's card can rank people with a health
+condition above those without about 65% of the time, from their weekday-daytime availability.
+That is weak but real leakage of special-category data through a field people legitimately share,
+and the v2 success criterion (accuracy near base rate) hid it.
+
+The five independent protected attributes show no signal: the adversary chose the prior (w = 0)
+for each, so their gain is exactly 0.
+
+## Sanity checks (unseen seeds 5–7, before the freeze)
+
+| Check | Log-loss gain | AUC | Result |
+|---|---|---|---|
+| Planted health in the card (seed 5) | +0.59 | 1.00 | clearly positive on both |
+| Built-in daytime-availability hint | +0.020 to +0.044 | 0.64 to 0.72 | small positive: detected |
+| Same, availability removed from the view | −0.014 to +0.004 | 0.48 to 0.57 | gone: the signal is the hint |
+
+## Reproducibility fix
+
+The first v2.1 run (plan `28a601e1e8192539`) exposed a bug. The fixture owner agent drew consent for
+employer and school by iterating over a Python set, whose order changes between processes. So a
+fresh process could approve different fields (seed 1000: 16,053 or 16,452 declined answers). Both
+frozen runs, v2 and the first v2.1, happened to use the same order. The code now fixes that
+order, so it reproduces them in every process; a test checks four hash seeds. The rerun under
+the fixed code is identical to the first v2.1 run. One pre-freeze note changed: politics no
+longer picks w = 1/4 (that came from the other order).
+
+## Caveats
+
+- The weak-signal adversary is naive Bayes with one calibration weight per attribute. A
+  stronger model could find more signal, so these are lower bounds on leakage.
+- With 10 seeds, bootstrap intervals are approximate; resampling seeds respects that people
+  within a seed share pairs, at the cost of few resampling units.
+- Proxy links between protected attributes and employer, school or city are not modelled.
+- Invented population and compatibility model, fixture agents; not real-user outcomes. No live
+  run (`--provider claude`) occurred.
