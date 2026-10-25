@@ -209,3 +209,38 @@ sanity checks on unseen seeds 5–7 read: planted health gain +0.59, AUC 1.00; d
 +0.020 to +0.044, AUC 0.64 to 0.72 (availability removed: gain −0.014 to +0.004, AUC 0.48 to
 0.57); all five independent protected controls choose w = 0 with gain 0. The earlier note that
 politics picks w = 1/4 came from the other set order and no longer applies.
+
+## match-sim v3: availability granularity
+
+Frozen before the held-out run, 2026-10-25. Everything in v2 and v2.1 stands. The plan's
+`schema_version` is `leo.match-sim.v3` (new plan hash and folder). Same held-out seeds 1000–1009,
+same population, owner agents, matchers and adversary design.
+
+- Levels, applied by the Exchange to the approved card (`coarsen_availability` in
+  `exchange/matchmaking.py`); the Q&A gate can only quote the coarsened card:
+  - L0 `exact`: the current tags (early-morning, weekday-daytime, weekday-evening, weekend).
+  - L1 `day-part`: morning / afternoon / evening. Daytime counts as morning and afternoon; a tag
+    naming no time of day (weekend) covers all three.
+  - L2 `week-part`: weekday vs weekend only.
+  - L3 `none`: availability is removed from the card.
+- Hard constraint change, needed for L3: shared availability is required only when both cards
+  state it. At L0–L2 every card states it, so L0 reproduces v2.1 exactly.
+- The hidden compatibility labels still use exact latent availability, so coarser cards can cost
+  precision.
+- The adversary knows the level: it is retrained per level on development seeds, with the same
+  v2.1 weight selection.
+- Measures per level, for the hybrid matcher (its information set: card plus gated Q&A):
+  - health log-loss gain and AUC (condition vs none);
+  - hybrid precision@5 and its paired difference from L0;
+  - hybrid Q&A-gate block rate (blocked / all hybrid answers).
+  All with the v2.1 seed bootstrap (10,000 replicates, percentile 95% CI).
+- Decision rule (pre-registered, computed by `decide` in `match_sim.py`): the default is the
+  finest level where the health AUC CI includes 0.5 and the log-loss gain CI includes 0
+  (interval ends count as included). If none qualifies except L3, the default is L3. Precision
+  does not enter the rule; it is reported as the cost.
+- After the run, the chosen default is applied in `exchange/matchmaking.py`. That changes a source
+  digest, so the campaign is rerun under the resulting plan hash and must reproduce every number.
+- Sanity run on unseen seeds 5–7 before freezing (3 seeds, wide intervals): health gain / AUC
+  L0 +0.036 / 0.68, L1 +0.010 / 0.58, L2 +0.004 / 0.57 (gain CI includes 0, AUC CI does not
+  include 0.5), L3 −0.006 / 0.52; hybrid precision@5 0.42, 0.31, 0.33, 0.31; gate block rate
+  3.0–3.1% at every level; 0 violations. On those seeds the rule picks L3.
