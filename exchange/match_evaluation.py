@@ -1,6 +1,5 @@
 """Small predeclared synthetic comparison; never a real-user compatibility claim."""
-from itertools import combinations
-from exchange.matchmaking import propose
+from exchange.matchmaking import propose, tag_overlap
 from exchange.common import DATA, write_json
 
 
@@ -13,7 +12,7 @@ def evaluate():
     ]
     # Frozen invented mutual-interest labels, independent of both recommendation rules.
     labels = {('synthetic-a','synthetic-b'), ('synthetic-a','synthetic-d')}
-    baseline = [tuple(sorted([a['id'],b['id']])) for a,b in combinations(profiles,2) if set(a['interests']) & set(b['interests'])]
+    baseline = [tuple(p['participants']) for p in tag_overlap(profiles)]
     proposals = propose(profiles)
     constrained = [tuple(p['participants']) for p in proposals['proposals']]
     by_id = {p['id']:p for p in profiles}

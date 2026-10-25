@@ -23,9 +23,10 @@ class Profile(BaseModel):
     timezone: str = Field(max_length=50)
 
 
-def propose(profiles):
-    if not isinstance(profiles, list) or len(profiles) > 40:
-        raise ValueError('up to 40 approved outward-facing profiles required')
+def propose(profiles, limit=40):
+    # The A2A service keeps the 40-profile bound; the offline simulation passes a larger limit.
+    if not isinstance(profiles, list) or len(profiles) > limit:
+        raise ValueError(f'up to {limit} approved outward-facing profiles required')
     ids = set()
     for p in profiles:
         if not isinstance(p, dict) or set(p) - (FIELDS | {'id'}) or not isinstance(p.get('id'), str) or p['id'] in ids:
@@ -44,6 +45,57 @@ def propose(profiles):
                           'status': 'proposal-only', 'contact_disclosed': False})
     return {'purpose': PURPOSE, 'proposals': sorted(pairs, key=lambda p: p['participants']), 'identity': 'synthetic pseudonymous; not anonymous',
             'consent': 'separate explicit consent from both profile owners required'}
+
+
+def tag_overlap(profiles):
+    """Baseline: every pair sharing at least one interest, scored by interest Jaccard overlap."""
+    pairs = []
+    for a, b in combinations(profiles, 2):
+        left, right = set(a.get('interests', [])), set(b.get('interests', []))
+        if left & right:
+            pairs.append({'participants': sorted([a['id'], b['id']]), 'score': len(left & right) / len(left | right),
+                          'shared_interests': sorted(left & right)})
+    return pairs
+
+
+# Panel matcher, ported in shape from the agent-match prototype: four independent specialists,
+# then a director whose probability is kept alongside every dissent it cannot suppress.
+SPECIALISTS = ('Compatibility', 'Friction', 'Timing', "Devil's Advocate")
+FOCUS = ('shared interests and goals', 'working style and commitment differences',
+         'availability and timezone overlap', 'unsupported collaboration assumptions')
+
+
+class _Strict(BaseModel):
+    model_config = ConfigDict(extra='forbid', strict=True)
+
+
+class Vote(_Strict):
+    specialist: str
+    p: float = Field(ge=0, le=1, allow_inf_nan=False)
+    reason: str = Field(max_length=500)
+    dissent: str = Field(max_length=1000)
+
+
+class Synthesis(_Strict):
+    p: float = Field(ge=0, le=1, allow_inf_nan=False)
+    dissent: str = Field(max_length=2000)
+    reasons: list[str] = Field(min_length=1, max_length=8)
+
+
+def panel(meeting, provider, threshold=0.5):
+    """meeting: what both sides may see (outward profiles and gated Q&A). Returns p, dissent and introduce."""
+    votes = []
+    for specialist, focus in zip(SPECIALISTS, FOCUS, strict=True):
+        vote = Vote.model_validate(provider.complete('specialist', {'specialist': specialist, 'focus': focus, 'meeting': meeting}))
+        if vote.specialist != specialist:
+            raise ValueError('specialist identity mismatch')
+        votes.append(vote)
+    proposal = Synthesis.model_validate(provider.complete('director', {'meeting': meeting, 'votes': [v.model_dump() for v in votes]}))
+    dissent = [f'{v.specialist}: {v.dissent}' for v in votes if v.dissent]
+    if proposal.dissent:
+        dissent.append(f'Director: {proposal.dissent}')
+    return {'p': proposal.p, 'introduce': proposal.p >= threshold, 'reasons': proposal.reasons,
+            'dissent': ' | '.join(dissent) or 'No dissent recorded.', 'votes': [v.model_dump() for v in votes]}
 
 
 class DisclosureStore(Database):
