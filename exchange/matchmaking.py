@@ -63,8 +63,13 @@ class Profile(BaseModel):
     school: str | None = Field(default=None, max_length=80)
 
 
-def propose(profiles, limit=40):
-    # The A2A service keeps the 40-profile bound; the offline simulation passes a larger limit.
+def propose(profiles, limit=40, private_overlap=None):
+    """Pairs that pass every hard constraint. The A2A service keeps the 40-profile bound; the offline
+    simulation passes a larger limit.
+
+    private_overlap(a_id, b_id) -> bool (match-sim v4): one yes/no "do our private availabilities
+    overlap?" answered by the owners' agents. It is asked once per pair, only for pairs that already
+    pass the card constraints, and replaces the card availability constraint. Slots are never shown."""
     if not isinstance(profiles, list) or len(profiles) > limit:
         raise ValueError(f'up to {limit} approved outward-facing profiles required')
     ids = set()
@@ -81,10 +86,18 @@ def propose(profiles, limit=40):
         communication = sorted(set(a.get('communication', [])) & set(b.get('communication', [])))
         # Availability is a hard constraint only when both cards state it (it may be withheld).
         stated = bool(a.get('availability')) and bool(b.get('availability'))
-        if overlap and goals and (available or not stated) and communication:
-            pairs.append({'participants': sorted([a['id'], b['id']]), 'shared_interests': overlap,
-                          'shared_goals': goals, 'availability': available, 'communication': communication,
-                          'status': 'proposal-only', 'contact_disclosed': False})
+        if not (overlap and goals and communication):
+            continue
+        if private_overlap is not None:
+            if not private_overlap(a['id'], b['id']):
+                continue
+            available = []
+        elif stated and not available:
+            continue
+        pair = {'participants': sorted([a['id'], b['id']]), 'shared_interests': overlap,
+                'shared_goals': goals, 'availability': available, 'communication': communication,
+                'status': 'proposal-only', 'contact_disclosed': False}
+        pairs.append(pair if private_overlap is None else {**pair, 'availability_overlap': True})
     return {'purpose': PURPOSE, 'proposals': sorted(pairs, key=lambda p: p['participants']), 'identity': 'synthetic pseudonymous; not anonymous',
             'consent': 'separate explicit consent from both profile owners required'}
 
@@ -140,16 +153,16 @@ def panel(meeting, provider, threshold=0.5):
             'dissent': ' | '.join(dissent) or 'No dissent recorded.', 'votes': [v.model_dump() for v in votes]}
 
 
-def hybrid(profiles, provider, meeting, threshold=0.5, limit=40):
+def hybrid(profiles, provider, meeting, threshold=0.5, limit=40, private_overlap=None):
     """Constrained filter first; the panel then scores only the surviving pairs, which are ranked by p.
 
     Every proposal satisfies the hard constraints by construction, and panel calls scale with the
     survivors rather than with all pairs. meeting(a, b) returns what both sides may see."""
     by_id = {p['id']: p for p in profiles}
     ranked = []
-    for survivor in propose(profiles, limit)['proposals']:
+    for survivor in propose(profiles, limit, private_overlap)['proposals']:
         a, b = (by_id[i] for i in survivor['participants'])
-        seen = meeting(a, b)
+        seen = meeting(a, b) if private_overlap is None else {**meeting(a, b), 'overlap': True}
         result = panel(seen, provider, threshold)
         ranked.append({**survivor, 'p': result['p'], 'reasons': result['reasons'], 'dissent': result['dissent'], 'meeting': seen})
     return sorted(ranked, key=lambda r: (-r['p'], r['participants']))

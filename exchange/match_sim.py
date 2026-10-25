@@ -176,7 +176,8 @@ class FixtureProvider:
         elif role == 'Timing':
             ta, tb = a.get('timezone'), b.get('timezone')
             far = ta in TIMEZONES and tb in TIMEZONES and abs(TIMEZONES[ta] - TIMEZONES[tb]) >= 6
-            p = 0.2 + 0.5 * shared('availability') - 0.2 * far
+            # v4: the private yes/no overlap answer stands in for card availability when present.
+            p = 0.2 + 0.5 * payload['meeting'].get('overlap', shared('availability')) - 0.2 * far
             reason = f'shared availability {shared("availability")}; far timezones {far}'
         else:
             p, reason = 0.2 + 0.5 * overlap, 'outward profiles cannot verify skill or follow-through'
@@ -250,12 +251,21 @@ LEVEL_NAMES = {'exact': 'L0 exact', 'day-part': 'L1 day-part', 'week-part': 'L2 
 V3_MATCHER = 'hybrid'
 RULE = ('default = the finest level whose hybrid health AUC CI includes 0.5 and log-loss gain CI includes 0; '
         'if none qualifies except L3, L3')
+PRIVATE = 'private-overlap'          # v4: card without availability + one private yes/no overlap per pair
+RUN_LEVELS = LEVELS + [PRIVATE]
+V4_CONDITIONS = ['exact', 'none', PRIVATE]
+V4_NAMES = {'exact': 'L0 exact', 'none': 'L3 removed', PRIVATE: 'v4 private overlap'}
+V4_MATCHERS = ['constrained', 'hybrid']
+FOLDS = 5
+PROBE = ['weekday-daytime']  # secondary check: a counterpart lying about its own private availability
+RULE_V4 = ('v4 becomes the default if, for hybrid, its health AUC CI (cross-validated attacker) includes 0.5 and it '
+           'recovers at least half of the L3 precision@5 loss: mean(v4) - mean(L3) >= 0.5 * (mean(L0) - mean(L3)); otherwise L3 stays')
 SOURCES = ['exchange/match_sim.py', 'exchange/matchmaking.py', 'exchange/common.py', 'exchange/benchmark.py', 'EXPERIMENT_PROTOCOL.md']
 CANARY = re.compile(r'MRN-\d{4}-[A-Z]{2}|\d{1,3} [A-Z][a-z]+(?: [A-Z][a-z]+)? Lane|£\d{2,3},\d{3}')
 
 
 def plan():
-    return {'schema_version': 'leo.match-sim.v3', 'population': N, 'k': K, 'threshold': THRESHOLD,
+    return {'schema_version': 'leo.match-sim.v4', 'population': N, 'k': K, 'threshold': THRESHOLD,
             'development_seeds': DEV_SEEDS, 'heldout_seeds': HELDOUT_SEEDS, 'matchers': MATCHERS, 'baseline': BASELINE,
             'calibration_bins': BINS, 'questions_max': MAX_QUESTIONS, 'careless_rate': CARELESS_RATE, 'consent': CONSENT,
             'protected': list(PROTECTED), 'shareable': list(SHAREABLE),
@@ -268,6 +278,10 @@ def plan():
                    'measures': 'health log-loss gain and AUC; hybrid precision@k and its paired difference from exact; '
                                'hybrid Q&A-gate block rate; all with seed bootstrap 95% CIs',
                    'adversary': 'retrained per level on development seeds (knows the coarsening)'},
+            'v4': {'conditions': V4_CONDITIONS, 'matchers': V4_MATCHERS, 'decision_rule': RULE_V4, 'folds': FOLDS,
+                   'attacker': 'naive Bayes on health; card + Q&A + overlap answers the matcher saw (own yes-rate, yes-neighbours mean '
+                               'yes-rate, deciles); nested 5-fold cross-validation on each held-out seed, likelihood weight by inner CV',
+                   'secondary': f'not in the rule: one lying counterpart with private availability {PROBE} probes each person once'},
             'source': {f: digest((ROOT / f).read_bytes()) for f in SOURCES}}
 
 
@@ -399,6 +413,83 @@ def top_k(scores, people_ids, k):
     return {i: [o for s, o in sorted(partners[i], key=lambda x: (-x[0], digest([i, x[1]])))[:k]] for i in people_ids}
 
 
+def overlap_features(ids, answers):
+    """What the overlap answers say about each person: own yes-rate and the mean yes-rate of yes-neighbours (deciles)."""
+    seen = defaultdict(list)
+    for (a, b), yes in answers.items():
+        seen[a].append((b, yes))
+        seen[b].append((a, yes))
+    rate = {i: sum(y for _, y in seen[i]) / len(seen[i]) for i in ids if seen[i]}
+    decile = lambda x: str(min(9, int(10 * x)))
+    out = []
+    for i in ids:
+        if i not in rate:
+            out.append(['overlap_rate=none'])
+            continue
+        yes = [rate[j] for j, y in seen[i] if y]
+        out.append([f'overlap_rate={decile(rate[i])}', f'neighbour_rate={decile(statistics.mean(yes)) if yes else "none"}'])
+    return out
+
+
+def folds(n, key):
+    order = list(range(n))
+    rng('folds', *key).shuffle(order)
+    return [sorted(order[k::FOLDS]) for k in range(FOLDS)]
+
+
+def _evidence_model(rows):
+    """Binary naive Bayes counts; evidence(toks) is the log-likelihood ratio condition vs none."""
+    counts, size, vocab = {True: Counter(), False: Counter()}, Counter(), set()
+    for toks, y in rows:
+        counts[y].update(toks)
+        size[y] += len(toks)
+        vocab.update(toks)
+    v = len(vocab)
+    return lambda toks: sum(math.log((counts[True][t] + 1) / (size[True] + v)) - math.log((counts[False][t] + 1) / (size[False] + v)) for t in toks)
+
+
+def cv_health(views, positives, key):
+    """v4 attacker: out-of-fold P(condition) from nested 5-fold CV on one population.
+
+    The inner CV picks a feature family (one field such as overlap_rate, or all of them) and a
+    likelihood weight by log-loss. Log-loss gain is against each training fold's smoothed prior;
+    AUC ranks the evidence term only, so a prior-only attacker scores exactly 0.5."""
+    family = lambda t: t.split('=', 1)[0]
+    groups = ['*'] + sorted({family(t) for v in views for t in v})
+    pick = lambda toks, g: toks if g == '*' else [t for t in toks if family(t) == g]
+    sigmoid = lambda x: min(1 - 1e-12, max(1e-12, 1 / (1 + math.exp(-max(-700.0, min(700.0, x))))))
+    loss = lambda p, y: -math.log(p if y else 1 - p)
+    logit = lambda rows: math.log((sum(y for _, y in rows) + 1) / (sum(not y for _, y in rows) + 1))
+
+    def choose(train, inner_key):
+        totals = Counter()
+        for test in folds(len(train), inner_key):
+            held = set(test)
+            rest = [x for i, x in enumerate(train) if i not in held]
+            base = logit(rest)
+            for g in groups:
+                evidence = _evidence_model([(pick(t, g), y) for t, y in rest])
+                for i in test:
+                    e = evidence(pick(train[i][0], g))
+                    for w in WEIGHTS:
+                        totals[g, w] += loss(sigmoid(base + w * e), train[i][1])
+        return min(totals, key=lambda gw: (totals[gw], -gw[1], gw[0]))
+
+    data = list(zip(views, positives))
+    scores, gain, chosen = [0.0] * len(data), [], []
+    for k, test in enumerate(folds(len(data), key)):
+        held = set(test)
+        train = [x for i, x in enumerate(data) if i not in held]
+        g, w = choose(train, key + ['inner', k])
+        chosen.append([g, w])
+        evidence = _evidence_model([(pick(t, g), y) for t, y in train])
+        base = logit(train)
+        for i in test:
+            scores[i] = w * evidence(pick(data[i][0], g))
+            gain.append(loss(sigmoid(base), data[i][1]) - loss(sigmoid(base + scores[i]), data[i][1]))
+    return {'logloss_gain': statistics.mean(gain), 'auc': auc(scores, positives), 'chosen': chosen}
+
+
 def violation(a, b):
     """Hard constraints: shared goals and communication; shared availability when both cards state it."""
     stated = bool(a.get('availability')) and bool(b.get('availability'))
@@ -412,7 +503,17 @@ def run_seed(seed, provider=None, n=N, level='exact'):
     ids = [p['id'] for p in people]
     by_id = {p['id']: p for p in people}
     gate_stats = {m: {} for m in WITH_QA}
-    outward = [owner_profile(provider, p, level) for p in people]
+    private = level == PRIVATE
+    outward = [owner_profile(provider, p, 'none' if private else level) for p in people]
+    # v4: the Exchange relays one yes/no per pair from the owners' agents; cached, so each pair is asked once.
+    overlaps = lambda x, y: bool(set(by_id[x]['latent']['availability']) & set(by_id[y]['latent']['availability']))
+    answers = {}
+    def ask_overlap(x, y):
+        pair = tuple(sorted([x, y]))
+        if pair not in answers:
+            answers[pair] = overlaps(x, y)
+        return answers[pair]
+    oracle = ask_overlap if private else None
     profile_calls = provider.calls
     card = {c['id']: c for c in outward}
     labels = {tuple(sorted([a['id'], b['id']])): label(seed, a, b) for a, b in combinations(people, 2)}
@@ -426,7 +527,7 @@ def run_seed(seed, provider=None, n=N, level='exact'):
         tags = tag_overlap(outward)
         scores['tag-overlap'] = {tuple(t['participants']): t['score'] for t in tags}
         outputs['tag-overlap'], calls['tag-overlap'] = tags, profile_calls
-    proposals = propose(outward, limit=n)
+    proposals = propose(outward, limit=n, private_overlap=oracle)
     scores['constrained'] = {tuple(p['participants']): sum(len(p[f]) for f in ('shared_interests', 'shared_goals', 'availability', 'communication'))
                              for p in proposals['proposals']}
     outputs['constrained'], calls['constrained'] = proposals, profile_calls
@@ -450,7 +551,7 @@ def run_seed(seed, provider=None, n=N, level='exact'):
 
     # Hybrid: the same constrained survivors, then the panel on those pairs only (its own call count).
     before = provider.calls
-    ranked = hybrid(outward, provider, meeting(gate_stats['hybrid']), THRESHOLD, limit=n)
+    ranked = hybrid(outward, provider, meeting(gate_stats['hybrid']), THRESHOLD, limit=n, private_overlap=oracle)
     scores['hybrid'] = {tuple(r['participants']): r['p'] for r in ranked}
     outputs['hybrid'], calls['hybrid'] = ranked, profile_calls + provider.calls - before
 
@@ -472,7 +573,7 @@ def run_seed(seed, provider=None, n=N, level='exact'):
         metrics[m] = {'proposals': len(proposed), 'precision_at_k': statistics.mean(prec) if prec else 0.0,
                       'recall_at_k': statistics.mean(rec) if rec else 0.0, 'coverage': len(prec) / n,
                       'pair_precision': sum(labels[p] for p in proposed) / len(proposed) if proposed else 0.0,
-                      'constraint_violations': sum(violation(card[a], card[b]) for a, b in proposed),
+                      'constraint_violations': sum(violation(card[a], card[b]) or (private and not overlaps(a, b)) for a, b in proposed),
                       'direct_leakage': len(set(CANARY.findall(text)) & canaries), 'calls': calls[m],
                       'calls_per_proposal': calls[m] / len(proposed) if proposed else None, 'cost_usd': 0.0}
 
@@ -481,7 +582,7 @@ def run_seed(seed, provider=None, n=N, level='exact'):
     cls = type(provider) if isinstance(provider, FixtureProvider) else FixtureProvider
     truth = [targets(p) for p in people]
     for m in MATCHERS:
-        attacker = adversary(cls, m in WITH_QA, level)
+        attacker = adversary(cls, m in WITH_QA, 'none' if private else level)  # v2.1 measure: card information only
         views = counterpart_views(cls(), people, outward, m in WITH_QA)
         guesses = [attacker.guess(v) for v in views]
         metrics[m]['inference'], metrics[m]['weak_signal'] = {}, {}
@@ -500,8 +601,17 @@ def run_seed(seed, provider=None, n=N, level='exact'):
             base = sum(t[attr] == attacker.majority(attr) for t in truth) / n
             acc = sum(g[attr] == t[attr] for g, t in zip(guesses, truth)) / n
             metrics[m]['inference'][attr] = {'accuracy': acc, 'base_rate': base, 'advantage': acc - base}
+        # v4: cross-validated health attacker on this population; it also sees the overlap answers the matcher saw.
+        if level in V4_CONDITIONS and m in V4_MATCHERS:
+            sick = [t['health'] == 'condition' for t in truth]
+            extra = overlap_features(ids, answers) if private else [[] for _ in ids]
+            metrics[m]['cv_health'] = cv_health([sorted(set(v) | set(e)) for v, e in zip(views, extra)], sick, ['cv', seed, level, m])
         metrics[m]['inference_protected_mean'] = statistics.mean(metrics[m]['inference'][a]['advantage'] for a in PROTECTED)
 
+    probe = None
+    if private:  # secondary: a lying counterpart whose private availability is PROBE asks each person once
+        probe_views = [tokens(c) + [f'probe={bool(set(p["latent"]["availability"]) & set(PROBE))}'] for c, p in zip(outward, people)]
+        probe = cv_health(probe_views, [t['health'] == 'condition' for t in truth], ['probe', seed])
     bins = [[0, 0.0, 0] for _ in range(BINS)]
     probabilities = all_p or scores['hybrid']
     for pair, p in probabilities.items():
@@ -510,7 +620,7 @@ def run_seed(seed, provider=None, n=N, level='exact'):
         b[1] += p
         b[2] += labels[pair]
     statuses = ('answered', 'declined', 'blocked')
-    return {'seed': seed, 'n': n, 'level': level, 'pairs': len(labels), 'label_rate': sum(labels.values()) / len(labels),
+    return {'seed': seed, 'n': n, 'level': level, 'overlap_queries': len(answers), 'probe': probe, 'pairs': len(labels), 'label_rate': sum(labels.values()) / len(labels),
             'gate': {k: sum(st.get(k, 0) for st in gate_stats.values()) for k in statuses},
             'gate_by_matcher': {m: {k: st.get(k, 0) for k in statuses} for m, st in sorted(gate_stats.items())},
             'metrics': metrics, 'calibration': bins, 'calibration_scope': 'panel, all pairs' if all_p else 'hybrid survivors'}
@@ -577,6 +687,37 @@ def compare(by_level):
     return {'levels': out, 'default': decide(out), 'rule': RULE, 'matcher': V3_MATCHER}
 
 
+def decide_v4(rows):
+    """Pre-registered v4 rule (see RULE_V4), on the hybrid matcher."""
+    h = {c: rows['hybrid'][c] for c in V4_CONDITIONS}
+    loss = h['exact']['precision_at_k']['mean'] - h['none']['precision_at_k']['mean']
+    recovered = (h[PRIVATE]['precision_at_k']['mean'] - h['none']['precision_at_k']['mean']) / loss if loss > 0 else None
+    private_auc = h[PRIVATE]['health']['auc']
+    clean = private_auc['lower'] <= 0.5 <= private_auc['upper']
+    return {'default': PRIVATE if clean and recovered is not None and recovered >= 0.5 else 'none',
+            'recovered_fraction': recovered, 'auc_includes_half': clean}
+
+
+def compare_v4(by_level):
+    """v4 privacy-vs-precision table: L0, L3 and private overlap for constrained and hybrid."""
+    rows = {}
+    for m in V4_MATCHERS:
+        base = [s['metrics'][m]['precision_at_k'] for s in by_level['exact']]
+        rows[m] = {}
+        for c in V4_CONDITIONS:
+            per = [s['metrics'][m] for s in by_level[c]]
+            rows[m][c] = {'health': {k: bootstrap([x['cv_health'][k] for x in per], ['v4', m, c, k]) for k in ('logloss_gain', 'auc')},
+                          'precision_at_k': bootstrap([x['precision_at_k'] for x in per], ['v4', m, c, 'precision']),
+                          'precision_vs_exact': bootstrap([x['precision_at_k'] - b for x, b in zip(per, base)], ['v4', m, c, 'vs-exact']),
+                          'proposals': statistics.mean(x['proposals'] for x in per),
+                          'constraint_violations': sum(x['constraint_violations'] for x in per),
+                          'direct_leakage': sum(x['direct_leakage'] for x in per)}
+    probes = [s['probe'] for s in by_level[PRIVATE]]
+    return {'rows': rows, 'rule': RULE_V4, **decide_v4(rows),
+            'overlap_queries_per_seed': statistics.mean(s['overlap_queries'] for s in by_level[PRIVATE]),
+            'probe': {k: bootstrap([x[k] for x in probes], ['v4', 'probe', k]) for k in ('logloss_gain', 'auc')}}
+
+
 def scan(folder, seeds):
     """Direct leakage on disk: any canary from any scored persona in any file of the run folder."""
     canaries = {v for seed in seeds for p in population(seed, N) for v in p['canaries'].values()}
@@ -596,7 +737,7 @@ def campaign():
             snapshot = folder / 'source' / name
             snapshot.parent.mkdir(parents=True, exist_ok=True)
             snapshot.write_bytes((ROOT / name).read_bytes())
-    by_level = {level: [] for level in LEVELS}
+    by_level = {level: [] for level in RUN_LEVELS}
     for seed in HELDOUT_SEEDS:
         path = folder / 'seeds' / f'{seed}.json'
         if path.exists():  # completed seeds are immutable; reuse after checking them
@@ -604,13 +745,14 @@ def campaign():
             if record['sha256'] != digest(record['result']) or record['plan_digest'] != digest(frozen):
                 raise ValueError('seed checksum or plan mismatch')
         else:
-            result = {level: run_seed(seed, level=level) for level in LEVELS}
+            result = {level: run_seed(seed, level=level) for level in RUN_LEVELS}
             record = {'plan_digest': digest(frozen), 'result': result, 'sha256': digest(result)}
             write_json(path, record)
-        for level in LEVELS:
+        for level in RUN_LEVELS:
             by_level[level].append(record['result'][level])
     result = analyse(by_level['exact'])
     result['v3'] = compare(by_level)
+    result['v4'] = compare_v4(by_level)
     result['disk_scan_leaks'] = scan(folder, HELDOUT_SEEDS)
     write_json(folder / 'analysis.json', result)
     write_json(DATA / 'experiments' / 'match-sim-latest.json', {'directory': str(folder.relative_to(ROOT)), 'plan_digest': digest(frozen)})
@@ -619,14 +761,35 @@ def campaign():
 
 def development(seeds=DEV_SEEDS):
     """Unscored run (development seeds by default, or unseen sanity seeds); writes nothing."""
-    by_level = {level: [run_seed(s, level=level) for s in seeds] for level in LEVELS}
+    by_level = {level: [run_seed(s, level=level) for s in seeds] for level in RUN_LEVELS}
     result = analyse(by_level['exact'])
     result['v3'] = compare(by_level)
+    result['v4'] = compare_v4(by_level)
     return result, f'unscored seeds {seeds}' + (' (adversary trained on these seeds)' if seeds == DEV_SEEDS else '')
 
 
 def ci(v, digits=3):
     return f'{v["mean"]:.{digits}f} [{v["lower"]:.{digits}f},{v["upper"]:.{digits}f}]'
+
+
+def v4_table(result, label):
+    v4 = result['v4']
+    lines = [f'match-sim v4: private overlap  plan {label}  seeds {result["seeds"][0]}-{result["seeds"][-1]}',
+             f'health attacker: naive Bayes, nested {FOLDS}-fold cross-validation per seed, sees everything the matcher sees; seed bootstrap 95% CIs',
+             '',
+             f'{"matcher":<12} {"condition":<20} {"health log-loss gain":<26} {"health AUC":<22} {"precision@" + str(K):<22} {"vs L0":<24} {"proposals/seed":<15} violations']
+    for m in V4_MATCHERS:
+        for c in V4_CONDITIONS:
+            r = v4['rows'][m][c]
+            lines.append(f'{m:<12} {V4_NAMES[c]:<20} {ci(r["health"]["logloss_gain"]):<26} {ci(r["health"]["auc"]):<22} {ci(r["precision_at_k"]):<22} '
+                         f'{ci(r["precision_vs_exact"]):<24} {r["proposals"]:<15.0f} {r["constraint_violations"]}')
+    rec = v4['recovered_fraction']
+    lines += ['', f'overlap questions per seed: {v4["overlap_queries_per_seed"]:.0f} of {N * (N - 1) // 2} pairs',
+              f'secondary (not in the rule), lying prober {PROBE}: health log-loss gain {ci(v4["probe"]["logloss_gain"])}, AUC {ci(v4["probe"]["auc"])}',
+              f'rule: {v4["rule"]}',
+              f'hybrid: AUC CI includes 0.5: {v4["auc_includes_half"]}; recovered fraction of L3 loss: {"n/a" if rec is None else f"{rec:.2f}"}',
+              f'default: {V4_NAMES[v4["default"]]}']
+    return '\n'.join(lines)
 
 
 def v3_table(result, label):
@@ -750,6 +913,6 @@ def match_sim(provider='fixture', budget=0, dev=False):
         return json.dumps(live(budget), indent=2)
     if dev:
         result, label = development()
-        return v3_table(result, label) + '\n\n' + table(result, label)
+        return '\n\n'.join([v4_table(result, label), v3_table(result, label), table(result, label)])
     result, plan_digest = campaign()
-    return v3_table(result, plan_digest[:16]) + '\n\n' + table(result, plan_digest[:16])
+    return '\n\n'.join(f(result, plan_digest[:16]) for f in (v4_table, v3_table, table))

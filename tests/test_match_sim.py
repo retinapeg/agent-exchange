@@ -205,6 +205,7 @@ def test_campaign_freezes_plan_and_rejects_tampering(tmp_path, monkeypatch):
     v3 = ms.v3_table(first, plan_digest[:16])
     assert all(ms.LEVEL_NAMES[level] in v3 for level in ms.LEVELS) and 'default:' in v3
     assert first['v3']['default'] in ms.LEVELS
+    assert first['v4']['default'] in ('none', ms.PRIVATE) and 'v4 private overlap' in ms.v4_table(first, plan_digest[:16])
     assert set(first['precision_differences']) == {'panel - constrained', 'hybrid - constrained', 'hybrid - panel'}
     folder = tmp_path / 'experiments' / ('match-sim-' + plan_digest[:16])
     record = folder / 'seeds' / '1000.json'
@@ -300,3 +301,50 @@ def test_disclosure_store_applies_the_v3_availability_default(tmp_path):
     assert all('availability' not in p for p in outward)
     result = propose(outward)
     assert len(result['proposals']) == 1 and verify({'service': 'match', 'profiles': outward}, result)['accepted']
+
+
+def test_private_overlap_is_asked_once_per_card_compatible_pair_and_never_shows_slots():
+    cards = [{k: v for k, v in X.items() if k != 'availability'} for X in (A, B, C)]
+    cards.append({**cards[1], 'id': 'd', 'communication': ['video']})   # fails a card constraint with everyone
+    asked = []
+    def overlap(x, y):
+        asked.append((x, y))
+        return (x, y) != ('a', 'c')
+    result = propose(cards, private_overlap=overlap)
+    assert asked == [('a', 'b')]                       # c shares no interest with a or b; d shares no communication
+    assert [p['participants'] for p in result['proposals']] == [['a', 'b']]
+    assert result['proposals'][0]['availability'] == [] and result['proposals'][0]['availability_overlap'] is True
+    assert propose(cards, private_overlap=lambda x, y: False)['proposals'] == []
+
+
+def test_overlap_features_and_cross_validated_attacker():
+    feats = ms.overlap_features(['a', 'b', 'c', 'z'], {('a', 'b'): True, ('a', 'c'): False, ('b', 'c'): True})
+    assert feats[0] == ['overlap_rate=5', 'neighbour_rate=9'] and feats[3] == ['overlap_rate=none']
+    import random
+    r = random.Random(0)
+    sick = [r.random() < 0.3 for _ in range(200)]
+    planted = ms.cv_health([[f'x={y}', f'n={r.randint(0, 5)}'] for y in sick], sick, ['test'])
+    assert planted['auc'] > 0.95 and planted['logloss_gain'] > 0.3
+    constant = ms.cv_health([['x=1'] for _ in sick], sick, ['test'])
+    assert constant['auc'] == 0.5      # a prior-only attacker ranks nobody above anyone
+    noise = ms.cv_health([[f'n={r.randint(0, 5)}'] for _ in sick], sick, ['test'])
+    assert abs(noise['auc'] - 0.5) < 0.12 and noise['logloss_gain'] < 0.02
+
+
+def test_private_overlap_run_has_no_availability_on_cards_and_no_violations():
+    result = ms.run_seed(4, n=24, level=ms.PRIVATE)
+    assert 0 < result['overlap_queries'] <= 24 * 23 // 2
+    for m in ms.V4_MATCHERS:
+        assert result['metrics'][m]['constraint_violations'] == 0 and 'cv_health' in result['metrics'][m]
+    assert result['probe'] is not None and result['metrics']['hybrid']['direct_leakage'] == 0
+
+
+def test_v4_decision_rule_needs_no_detectable_health_signal_and_half_the_precision_back():
+    ci = lambda lo, hi: {'mean': (lo + hi) / 2, 'lower': lo, 'upper': hi}
+    row = lambda prec, auc: {'precision_at_k': {'mean': prec}, 'health': {'auc': auc}}
+    rows = lambda v4_prec, v4_auc: {'hybrid': {'exact': row(0.42, ci(0.6, 0.7)), 'none': row(0.32, ci(0.45, 0.55)), ms.PRIVATE: row(v4_prec, v4_auc)}}
+    assert ms.decide_v4(rows(0.40, ci(0.46, 0.54)))['default'] == ms.PRIVATE
+    assert ms.decide_v4(rows(0.36, ci(0.46, 0.54)))['default'] == 'none'     # recovers only 40%
+    assert ms.decide_v4(rows(0.42, ci(0.52, 0.60)))['default'] == 'none'     # health still detectable
+    assert abs(ms.decide_v4(rows(0.37, ci(0.46, 0.54)))['recovered_fraction'] - 0.5) < 1e-9
+    assert ms.decide_v4(rows(0.37, ci(0.46, 0.54)))['default'] == ms.PRIVATE  # exactly half counts
