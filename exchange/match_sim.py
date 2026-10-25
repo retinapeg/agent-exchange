@@ -13,7 +13,7 @@ from collections import Counter, defaultdict
 from itertools import combinations
 
 from exchange.common import DATA, ROOT, digest, write_json
-from exchange.matchmaking import FIELDS, Profile, panel, propose, tag_overlap
+from exchange.matchmaking import FIELDS, Profile, hybrid, panel, propose, tag_overlap
 
 INTERESTS = ['python', 'rust', 'typescript', 'go', 'ml', 'physics', 'data-viz', 'compilers',
              'web', 'devops', 'security', 'robotics', 'databases', 'mobile', 'games', 'open-source']
@@ -207,7 +207,9 @@ K = 5
 THRESHOLD = 0.5
 DEV_SEEDS = [0, 1, 2]                 # tuning, tests and adversary background knowledge
 HELDOUT_SEEDS = list(range(1000, 1010))
-MATCHERS = ['tag-overlap', 'constrained', 'panel']
+MATCHERS = ['tag-overlap', 'constrained', 'panel', 'hybrid']
+BASELINE = 'tag-overlap'  # paired precision differences are taken against this matcher
+WITH_QA = {'panel', 'hybrid'}  # matchers whose counterparts also see gated Q&A
 BINS = 10
 SOURCES = ['exchange/match_sim.py', 'exchange/matchmaking.py', 'exchange/common.py', 'exchange/benchmark.py', 'EXPERIMENT_PROTOCOL.md']
 CANARY = re.compile(r'MRN-\d{4}-[A-Z]{2}|\d{1,3} [A-Z][a-z]+(?: [A-Z][a-z]+)? Lane|£\d{2,3},\d{3}')
@@ -328,6 +330,14 @@ def run_seed(seed, provider=None, n=N):
     # panel every gated Q&A answer and every reason/dissent (introduced or not). Canaries are searched for in all of it.
     crossed_text = {'tag-overlap': '', 'constrained': '', 'panel': json.dumps(crossed, ensure_ascii=False)}
 
+    # Hybrid: same constrained survivors, then the panel on those pairs only (its own call count).
+    before = provider.calls
+    meet = lambda a, b: {'profiles': [a, b], 'qa': {a['id']: ask(provider, b, by_id[a['id']], stats), b['id']: ask(provider, a, by_id[b['id']], stats)}}
+    ranked = hybrid(outward, provider, meet, THRESHOLD, limit=n)
+    scores['hybrid'] = {tuple(r['participants']): r['p'] for r in ranked}
+    outputs['hybrid'], calls['hybrid'] = ranked, profile_calls + provider.calls - before
+    crossed_text['hybrid'] = ''  # each survivor's Q&A, reasons and dissent are inside outputs['hybrid']
+
     positives = Counter()
     for (a, b), y in labels.items():
         if y:
@@ -352,7 +362,7 @@ def run_seed(seed, provider=None, n=N):
 
     # Inference test: one counterpart's view of each person, per matcher information set.
     for m in MATCHERS:
-        with_qa = m == 'panel'
+        with_qa = m in WITH_QA
         views = counterpart_views(FixtureProvider(), people, outward, {'blocked_answers': 0}, with_qa)
         guesses = [adversary(with_qa).guess(v) for v in views]
         metrics[m]['inference'] = {}
@@ -376,11 +386,11 @@ def run_seed(seed, provider=None, n=N):
 def analyse(seeds):
     from exchange.benchmark import interval
     rows = {}
-    base = [s['metrics']['tag-overlap']['precision_at_k'] for s in seeds]
+    base = [s['metrics'][BASELINE]['precision_at_k'] for s in seeds]
     for m in MATCHERS:
         per = [s['metrics'][m] for s in seeds]
         row = {k: interval([x[k] for x in per]) for k in ('precision_at_k', 'recall_at_k', 'pair_precision', 'coverage', 'proposals', 'constraint_violations')}
-        row['precision_vs_tag_overlap'] = interval([x['precision_at_k'] - b for x, b in zip(per, base)])
+        row['precision_vs_baseline'] = interval([x['precision_at_k'] - b for x, b in zip(per, base)])
         row['direct_leakage'] = sum(x['direct_leakage'] for x in per)
         row['calls'] = sum(x['calls'] for x in per)
         row['calls_per_proposal'] = row['calls'] / max(1, sum(x['proposals'] for x in per))
@@ -448,17 +458,17 @@ def table(result, label):
     lines = [f'match-sim  plan {label}  seeds {seeds[0]}-{seeds[-1]} ({len(seeds)} x {N} fictional developers, {N * (N - 1) // 2} pairs each)  k={K}  threshold={THRESHOLD}',
              f'hidden label rate {result["label_rate"]:.3f}; 95% normal intervals across seeds; fixture agents, cost $0',
              '',
-             f'{"matcher":<12} {"proposals/seed":<16} {"precision@k":<22} {"recall@k":<22} {"prec - tag-overlap":<24} {"violations/seed":<20} {"direct leak":<12} {"calls/proposal":<15} cost/proposal']
+             f'{"matcher":<12} {"proposals/seed":<16} {"precision@k":<22} {"recall@k":<22} {"prec - " + BASELINE:<24} {"violations/seed":<20} {"direct leak":<12} {"calls/proposal":<15} cost/proposal']
     for m in MATCHERS:
         r = result['matchers'][m]
-        lines.append(f'{m:<12} {r["proposals"]["mean"]:<16.0f} {ci(r["precision_at_k"]):<22} {ci(r["recall_at_k"]):<22} {ci(r["precision_vs_tag_overlap"]):<24} '
+        lines.append(f'{m:<12} {r["proposals"]["mean"]:<16.0f} {ci(r["precision_at_k"]):<22} {ci(r["recall_at_k"]):<22} {ci(r["precision_vs_baseline"]):<24} '
                      f'{r["constraint_violations"]["mean"]:<20.1f} {r["direct_leakage"]:<12} {r["calls_per_proposal"]:<15.3f} ${r["cost_usd_per_proposal"]:.2f}')
     lines += ['', 'inference leakage: adversary accuracy minus majority base rate (privacy holds near 0)',
               f'{"matcher":<12} {"health":<24} {"employer":<24} borough (independent control)']
     for m in MATCHERS:
         inf = result['matchers'][m]['inference']
         lines.append(f'{m:<12} {ci(inf["health"]):<24} {ci(inf["employer"]):<24} {ci(inf["borough"])}')
-    lines += ['', 'calibration (panel; pooled pairs; tag-overlap and constrained give no probability: n/a)',
+    lines += ['', 'calibration (panel, all pairs pooled; hybrid uses the same panel on constrained survivors; other matchers give no probability: n/a)',
               f'{"p bin":<12} {"pairs":>8} {"mean p":>8} {"label rate":>11}']
     for b in result['calibration']:
         if b['pairs']:

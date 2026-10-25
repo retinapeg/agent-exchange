@@ -98,6 +98,21 @@ def panel(meeting, provider, threshold=0.5):
             'dissent': ' | '.join(dissent) or 'No dissent recorded.', 'votes': [v.model_dump() for v in votes]}
 
 
+def hybrid(profiles, provider, meeting, threshold=0.5, limit=40):
+    """Constrained filter first; the panel then scores only the surviving pairs, which are ranked by p.
+
+    Every proposal satisfies the hard constraints by construction, and panel calls scale with the
+    survivors rather than with all pairs. meeting(a, b) returns what both sides may see."""
+    by_id = {p['id']: p for p in profiles}
+    ranked = []
+    for survivor in propose(profiles, limit)['proposals']:
+        a, b = (by_id[i] for i in survivor['participants'])
+        seen = meeting(a, b)
+        result = panel(seen, provider, threshold)
+        ranked.append({**survivor, 'p': result['p'], 'reasons': result['reasons'], 'dissent': result['dissent'], 'meeting': seen})
+    return sorted(ranked, key=lambda r: (-r['p'], r['participants']))
+
+
 class DisclosureStore(Database):
     def __init__(self, path):
         super().__init__(path)

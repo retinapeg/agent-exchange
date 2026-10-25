@@ -4,7 +4,7 @@ import json
 import pytest
 
 from exchange import match_sim as ms
-from exchange.matchmaking import propose, tag_overlap, panel, SPECIALISTS
+from exchange.matchmaking import propose, tag_overlap, panel, hybrid, SPECIALISTS
 
 A = {'id': 'a', 'interests': ['python', 'physics'], 'goals': ['learn'], 'availability': ['weekend'], 'communication': ['async'], 'timezone': 'UTC'}
 B = {'id': 'b', 'interests': ['python'], 'goals': ['learn'], 'availability': ['weekend'], 'communication': ['async'], 'timezone': 'UTC'}
@@ -44,6 +44,15 @@ def test_panel_keeps_specialist_dissent_and_thresholds():
     assert result['introduce'] and result['p'] == 0.7
     assert "Devil's Advocate: cannot verify follow-through" in result['dissent']
     assert not panel({'profiles': [A, B], 'qa': {}}, ScriptedPanel(0.3))['introduce']
+
+
+def test_hybrid_scores_only_constrained_survivors_and_ranks_by_p():
+    provider = ScriptedPanel(0.7)
+    off = {**A, 'id': 'off', 'goals': ['cofound']}  # shares interests but no goal: filtered out
+    ranked = hybrid([A, B, off], provider, lambda a, b: {'profiles': [a, b], 'qa': {}}, limit=10)
+    assert [r['participants'] for r in ranked] == [['a', 'b']]
+    assert provider.calls == ['specialist'] * len(SPECIALISTS) + ['director']
+    assert ranked[0]['p'] == 0.7 and ranked[0]['status'] == 'proposal-only'
 
 
 def test_panel_rejects_impersonated_specialist_and_out_of_range_p():
@@ -105,6 +114,9 @@ def test_run_seed_small_population_measures_every_matcher():
     result = ms.run_seed(4, n=16)
     assert set(result['metrics']) == set(ms.MATCHERS)
     assert result['metrics']['constrained']['constraint_violations'] == 0
+    assert result['metrics']['hybrid']['constraint_violations'] == 0
+    assert result['metrics']['hybrid']['proposals'] == result['metrics']['constrained']['proposals']
+    assert result['metrics']['hybrid']['calls'] < result['metrics']['panel']['calls']
     assert all(m['direct_leakage'] == 0 for m in result['metrics'].values())
     assert sum(b[0] for b in result['calibration']) == result['pairs'] == 120
     assert 'raw_context' not in repr(result) and 'MRN-' not in repr(result)
