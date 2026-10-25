@@ -4,7 +4,7 @@ import json
 import pytest
 
 from exchange import match_sim as ms
-from exchange.matchmaking import propose, tag_overlap, panel, hybrid, SPECIALISTS
+from exchange.matchmaking import coarsen_availability, propose, tag_overlap, panel, hybrid, SPECIALISTS
 
 A = {'id': 'a', 'interests': ['python', 'physics'], 'goals': ['learn'], 'availability': ['weekend'], 'communication': ['async'], 'timezone': 'UTC'}
 B = {'id': 'b', 'interests': ['python'], 'goals': ['learn'], 'availability': ['weekend'], 'communication': ['async'], 'timezone': 'UTC'}
@@ -202,6 +202,9 @@ def test_campaign_freezes_plan_and_rejects_tampering(tmp_path, monkeypatch):
     assert ms.campaign()[0] == first  # reuses immutable seed records
     text = ms.table(first, plan_digest[:16])
     assert 'precision@k' in text and 'v2.1 (a)' in text and 'v2.1 (b)' in text
+    v3 = ms.v3_table(first, plan_digest[:16])
+    assert all(ms.LEVEL_NAMES[level] in v3 for level in ms.LEVELS) and 'default:' in v3
+    assert first['v3']['default'] in ms.LEVELS
     assert set(first['precision_differences']) == {'panel - constrained', 'hybrid - constrained', 'hybrid - panel'}
     folder = tmp_path / 'experiments' / ('match-sim-' + plan_digest[:16])
     record = folder / 'seeds' / '1000.json'
@@ -240,3 +243,47 @@ def test_results_do_not_depend_on_python_hash_seed():
     outputs = {subprocess.run([sys.executable, '-c', code], capture_output=True, text=True, check=True,
                               env={**os.environ, 'PYTHONHASHSEED': h}).stdout for h in ('0', '1', '2', '3')}
     assert len(outputs) == 1
+
+
+def test_availability_levels_coarsen_the_sim_vocabulary():
+    tags = ['early-morning', 'weekday-daytime', 'weekday-evening', 'weekend']
+    assert coarsen_availability(tags, 'exact') == sorted(tags)
+    assert coarsen_availability(['weekday-daytime'], 'day-part') == ['afternoon', 'morning']
+    assert coarsen_availability(['weekend'], 'day-part') == ['afternoon', 'evening', 'morning']
+    assert coarsen_availability(['early-morning', 'weekday-evening'], 'week-part') == ['weekday']
+    assert coarsen_availability(['weekend'], 'week-part') == ['weekend']
+    assert coarsen_availability(tags, 'none') is None
+    with pytest.raises(ValueError):
+        coarsen_availability(tags, 'hourly')
+
+
+def test_availability_constraint_applies_only_when_both_cards_state_it():
+    hidden = [{k: v for k, v in X.items() if k != 'availability'} for X in (A, B)]
+    assert [p['participants'] for p in propose(hidden)['proposals']] == [['a', 'b']]
+    assert not ms.violation(*hidden)
+    clash = {**B, 'availability': ['weekday-evening']}
+    assert propose([A, clash])['proposals'] == [] and ms.violation(A, clash)
+
+
+def test_removed_availability_leaves_cards_and_qa_without_it():
+    provider = ms.FixtureProvider()
+    people = ms.population(1000, 12)
+    for level in ms.LEVELS:
+        cards = [ms.owner_profile(provider, p, level) for p in people]
+        values = {v for c in cards for v in c.get('availability', [])}
+        expected = {'exact': set(ms.AVAILABILITY), 'day-part': {'morning', 'afternoon', 'evening'},
+                    'week-part': {'weekday', 'weekend'}, 'none': set()}[level]
+        assert values <= expected and (level != 'none' or all('availability' not in c for c in cards))
+    result = ms.run_seed(4, n=16, level='none')
+    assert result['level'] == 'none' and result['metrics']['hybrid']['constraint_violations'] == 0
+    assert result['metrics']['hybrid']['proposals'] > 0
+
+
+def test_v3_decision_rule_picks_the_finest_level_with_no_detectable_health_signal():
+    ci = lambda lo, hi: {'mean': (lo + hi) / 2, 'lower': lo, 'upper': hi}
+    leak = {'health': {'auc': ci(0.6, 0.7), 'logloss_gain': ci(0.01, 0.03)}}
+    clean = {'health': {'auc': ci(0.45, 0.55), 'logloss_gain': ci(-0.01, 0.01)}}
+    half = {'health': {'auc': ci(0.45, 0.55), 'logloss_gain': ci(0.001, 0.01)}}  # AUC passes, gain does not
+    assert ms.decide({'exact': leak, 'day-part': half, 'week-part': clean, 'none': clean}) == 'week-part'
+    assert ms.decide({'exact': leak, 'day-part': leak, 'week-part': leak, 'none': leak}) == 'none'
+    assert ms.decide(dict.fromkeys(ms.LEVELS, clean)) == 'exact'

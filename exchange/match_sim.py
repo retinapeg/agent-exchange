@@ -13,7 +13,7 @@ from collections import Counter, defaultdict
 from itertools import combinations
 
 from exchange.common import DATA, ROOT, digest, write_json
-from exchange.matchmaking import FIELDS, PROTECTED, Profile, hybrid, panel, propose, tag_overlap
+from exchange.matchmaking import AVAILABILITY_LEVELS, FIELDS, PROTECTED, Profile, coarsen_availability, hybrid, panel, propose, tag_overlap
 
 INTERESTS = ['python', 'rust', 'typescript', 'go', 'ml', 'physics', 'data-viz', 'compilers',
              'web', 'devops', 'security', 'robotics', 'databases', 'mobile', 'games', 'open-source']
@@ -189,13 +189,19 @@ class FixtureProvider:
         return {'p': round(p, 4), 'dissent': '', 'reasons': [v['reason'] for v in payload['votes']]}
 
 
-def owner_profile(provider, p):
-    """Owner agent drafts the outward card; the owner approves fields; only those leave."""
+def owner_profile(provider, p, level='exact'):
+    """Owner agent drafts the outward card; the owner approves fields; only those leave.
+    The Exchange then coarsens availability to `level` (v3); at 'none' the field is dropped."""
     draft = provider.complete('profile', {'persona': p})
     Profile.model_validate(draft['profile'])
     if not set(draft['approved_fields']) <= FIELDS:
         raise ValueError('owner agent approved an unknown field')
-    return {'id': p['id'], **{k: v for k, v in draft['profile'].items() if k in draft['approved_fields'] and v is not None}}
+    card = {'id': p['id'], **{k: v for k, v in draft['profile'].items() if k in draft['approved_fields'] and v is not None}}
+    if 'availability' in card:
+        card['availability'] = coarsen_availability(card['availability'], level)
+        if card['availability'] is None:
+            del card['availability']
+    return card
 
 
 def gate(topic, answer, card):
@@ -239,12 +245,17 @@ WITH_QA = {'panel', 'hybrid'}  # matchers whose counterparts also see gated Q&A
 BINS = 10
 BOOTSTRAP = 10000
 WEIGHTS = [1.0, 0.5, 0.25, 0.125, 0.0625, 0.03125, 0.0]  # candidate likelihood weights for v2.1 probabilities
+LEVELS = list(AVAILABILITY_LEVELS)    # v3: availability granularity, finest first
+LEVEL_NAMES = {'exact': 'L0 exact', 'day-part': 'L1 day-part', 'week-part': 'L2 weekday/weekend', 'none': 'L3 removed'}
+V3_MATCHER = 'hybrid'
+RULE = ('default = the finest level whose hybrid health AUC CI includes 0.5 and log-loss gain CI includes 0; '
+        'if none qualifies except L3, L3')
 SOURCES = ['exchange/match_sim.py', 'exchange/matchmaking.py', 'exchange/common.py', 'exchange/benchmark.py', 'EXPERIMENT_PROTOCOL.md']
 CANARY = re.compile(r'MRN-\d{4}-[A-Z]{2}|\d{1,3} [A-Z][a-z]+(?: [A-Z][a-z]+)? Lane|£\d{2,3},\d{3}')
 
 
 def plan():
-    return {'schema_version': 'leo.match-sim.v2.1', 'population': N, 'k': K, 'threshold': THRESHOLD,
+    return {'schema_version': 'leo.match-sim.v3', 'population': N, 'k': K, 'threshold': THRESHOLD,
             'development_seeds': DEV_SEEDS, 'heldout_seeds': HELDOUT_SEEDS, 'matchers': MATCHERS, 'baseline': BASELINE,
             'calibration_bins': BINS, 'questions_max': MAX_QUESTIONS, 'careless_rate': CARELESS_RATE, 'consent': CONSENT,
             'protected': list(PROTECTED), 'shareable': list(SHAREABLE),
@@ -253,6 +264,10 @@ def plan():
             'v2_1': {'precision_differences': 'paired bootstrap over held-out seeds, all matcher pairs', 'bootstrap_replicates': BOOTSTRAP,
                      'weak_signal': 'log-loss gain over smoothed development prior (nats), AUC for binary targets; bootstrap CIs',
                      'likelihood_weights': WEIGHTS},
+            'v3': {'levels': LEVELS, 'matcher': V3_MATCHER, 'decision_rule': RULE,
+                   'measures': 'health log-loss gain and AUC; hybrid precision@k and its paired difference from exact; '
+                               'hybrid Q&A-gate block rate; all with seed bootstrap 95% CIs',
+                   'adversary': 'retrained per level on development seeds (knows the coarsening)'},
             'source': {f: digest((ROOT / f).read_bytes()) for f in SOURCES}}
 
 
@@ -338,17 +353,17 @@ def counterpart_views(provider, people, outward, with_qa):
 _ADVERSARIES = {}
 
 
-def adversary(provider_cls, with_qa):
-    """Attacker background knowledge: the same owner-agent behaviour on development seeds.
-    Select the model on seeds 0-1 vs 2, then retrain on all development seeds."""
-    key = (provider_cls, with_qa)
+def adversary(provider_cls, with_qa, level='exact'):
+    """Attacker background knowledge: the same owner-agent behaviour (and availability level) on
+    development seeds. Select the model on seeds 0-1 vs 2, then retrain on all development seeds."""
+    key = (provider_cls, with_qa, level)
     if key not in _ADVERSARIES:
         def examples(seeds):
             out = []
             for seed in seeds:
                 provider = provider_cls()
                 people = population(seed, N)
-                outward = [owner_profile(provider, p) for p in people]
+                outward = [owner_profile(provider, p, level) for p in people]
                 out += [(v, targets(p)) for v, p in zip(counterpart_views(provider, people, outward, with_qa), people)]
             return out
         selected = Adversary(examples(DEV_SEEDS[:-1]), examples(DEV_SEEDS[-1:]))
@@ -385,21 +400,24 @@ def top_k(scores, people_ids, k):
 
 
 def violation(a, b):
-    return not all(set(a.get(f, [])) & set(b.get(f, [])) for f in ('goals', 'availability', 'communication'))
+    """Hard constraints: shared goals and communication; shared availability when both cards state it."""
+    stated = bool(a.get('availability')) and bool(b.get('availability'))
+    fields = ('goals', 'availability', 'communication') if stated else ('goals', 'communication')
+    return not all(set(a.get(f, [])) & set(b.get(f, [])) for f in fields)
 
 
-def run_seed(seed, provider=None, n=N):
+def run_seed(seed, provider=None, n=N, level='exact'):
     provider = provider or FixtureProvider()
     people = population(seed, n)
     ids = [p['id'] for p in people]
     by_id = {p['id']: p for p in people}
-    stats = {}
-    outward = [owner_profile(provider, p) for p in people]
+    gate_stats = {m: {} for m in WITH_QA}
+    outward = [owner_profile(provider, p, level) for p in people]
     profile_calls = provider.calls
     card = {c['id']: c for c in outward}
     labels = {tuple(sorted([a['id'], b['id']])): label(seed, a, b) for a, b in combinations(people, 2)}
-    meet = lambda a, b: {'profiles': [a, b], 'qa': {a['id']: ask(provider, b, by_id[a['id']], a, stats),
-                                                    b['id']: ask(provider, a, by_id[b['id']], b, stats)}}
+    meeting = lambda stats: lambda a, b: {'profiles': [a, b], 'qa': {a['id']: ask(provider, b, by_id[a['id']], a, stats),
+                                                                     b['id']: ask(provider, a, by_id[b['id']], b, stats)}}
 
     # Everything that leaves an owner agent goes into `outputs` (and `crossed` for the panel's
     # non-introduced pairs); canaries are searched for in all of it.
@@ -418,7 +436,7 @@ def run_seed(seed, provider=None, n=N):
         before = provider.calls
         scores['panel'], outputs['panel'] = {}, []
         for a, b in combinations(outward, 2):
-            seen = meet(a, b)
+            seen = meeting(gate_stats['panel'])(a, b)
             result = panel(seen, provider, THRESHOLD)
             pair = tuple(sorted([a['id'], b['id']]))
             all_p[pair] = result['p']
@@ -432,7 +450,7 @@ def run_seed(seed, provider=None, n=N):
 
     # Hybrid: the same constrained survivors, then the panel on those pairs only (its own call count).
     before = provider.calls
-    ranked = hybrid(outward, provider, meet, THRESHOLD, limit=n)
+    ranked = hybrid(outward, provider, meeting(gate_stats['hybrid']), THRESHOLD, limit=n)
     scores['hybrid'] = {tuple(r['participants']): r['p'] for r in ranked}
     outputs['hybrid'], calls['hybrid'] = ranked, profile_calls + provider.calls - before
 
@@ -463,7 +481,7 @@ def run_seed(seed, provider=None, n=N):
     cls = type(provider) if isinstance(provider, FixtureProvider) else FixtureProvider
     truth = [targets(p) for p in people]
     for m in MATCHERS:
-        attacker = adversary(cls, m in WITH_QA)
+        attacker = adversary(cls, m in WITH_QA, level)
         views = counterpart_views(cls(), people, outward, m in WITH_QA)
         guesses = [attacker.guess(v) for v in views]
         metrics[m]['inference'], metrics[m]['weak_signal'] = {}, {}
@@ -491,8 +509,10 @@ def run_seed(seed, provider=None, n=N):
         b[0] += 1
         b[1] += p
         b[2] += labels[pair]
-    return {'seed': seed, 'n': n, 'pairs': len(labels), 'label_rate': sum(labels.values()) / len(labels),
-            'gate': {k: stats.get(k, 0) for k in ('answered', 'declined', 'blocked')},
+    statuses = ('answered', 'declined', 'blocked')
+    return {'seed': seed, 'n': n, 'level': level, 'pairs': len(labels), 'label_rate': sum(labels.values()) / len(labels),
+            'gate': {k: sum(st.get(k, 0) for st in gate_stats.values()) for k in statuses},
+            'gate_by_matcher': {m: {k: st.get(k, 0) for k in statuses} for m, st in sorted(gate_stats.items())},
             'metrics': metrics, 'calibration': bins, 'calibration_scope': 'panel, all pairs' if all_p else 'hybrid survivors'}
 
 
@@ -528,6 +548,35 @@ def analyse(seeds):
             'scope': 'invented population and hidden compatibility model; fixture agents; not real-user outcomes'}
 
 
+def decide(levels):
+    """Pre-registered v3 decision rule (see RULE). Interval ends count as included."""
+    for level in LEVELS:
+        h = levels[level]['health']
+        if h['auc']['lower'] <= 0.5 <= h['auc']['upper'] and h['logloss_gain']['lower'] <= 0 <= h['logloss_gain']['upper']:
+            return level
+    return LEVELS[-1]
+
+
+def compare(by_level):
+    """v3 privacy-vs-precision summary per availability level, for the hybrid matcher's information set."""
+    base = [s['metrics'][V3_MATCHER]['precision_at_k'] for s in by_level['exact']]
+    out = {}
+    for level in LEVELS:
+        per = [s['metrics'][V3_MATCHER] for s in by_level[level]]
+        gate = [s['gate_by_matcher'][V3_MATCHER] for s in by_level[level]]
+        out[level] = {
+            'health': {k: bootstrap([x['weak_signal']['health'][k] for x in per], ['v3', level, 'health', k]) for k in ('logloss_gain', 'auc')},
+            'health_weight': per[0]['weak_signal']['health']['weight'],
+            'precision_at_k': bootstrap([x['precision_at_k'] for x in per], ['v3', level, 'precision']),
+            'precision_vs_exact': bootstrap([x['precision_at_k'] - b for x, b in zip(per, base)], ['v3', level, 'precision-vs-exact']),
+            'gate_block_rate': bootstrap([g['blocked'] / sum(g.values()) for g in gate], ['v3', level, 'gate']),
+            'gate': {k: sum(g[k] for g in gate) for k in ('answered', 'declined', 'blocked')},
+            'proposals': statistics.mean(x['proposals'] for x in per),
+            'constraint_violations': sum(x['constraint_violations'] for x in per),
+            'direct_leakage': sum(x['direct_leakage'] for x in per)}
+    return {'levels': out, 'default': decide(out), 'rule': RULE, 'matcher': V3_MATCHER}
+
+
 def scan(folder, seeds):
     """Direct leakage on disk: any canary from any scored persona in any file of the run folder."""
     canaries = {v for seed in seeds for p in population(seed, N) for v in p['canaries'].values()}
@@ -547,7 +596,7 @@ def campaign():
             snapshot = folder / 'source' / name
             snapshot.parent.mkdir(parents=True, exist_ok=True)
             snapshot.write_bytes((ROOT / name).read_bytes())
-    seeds = []
+    by_level = {level: [] for level in LEVELS}
     for seed in HELDOUT_SEEDS:
         path = folder / 'seeds' / f'{seed}.json'
         if path.exists():  # completed seeds are immutable; reuse after checking them
@@ -555,31 +604,49 @@ def campaign():
             if record['sha256'] != digest(record['result']) or record['plan_digest'] != digest(frozen):
                 raise ValueError('seed checksum or plan mismatch')
         else:
-            result = run_seed(seed)
+            result = {level: run_seed(seed, level=level) for level in LEVELS}
             record = {'plan_digest': digest(frozen), 'result': result, 'sha256': digest(result)}
             write_json(path, record)
-        seeds.append(record['result'])
-    result = analyse(seeds)
+        for level in LEVELS:
+            by_level[level].append(record['result'][level])
+    result = analyse(by_level['exact'])
+    result['v3'] = compare(by_level)
     result['disk_scan_leaks'] = scan(folder, HELDOUT_SEEDS)
     write_json(folder / 'analysis.json', result)
     write_json(DATA / 'experiments' / 'match-sim-latest.json', {'directory': str(folder.relative_to(ROOT)), 'plan_digest': digest(frozen)})
     return result, digest(frozen)
 
 
-def development():
-    """Unscored development run on the development seeds; writes nothing."""
-    seeds = [run_seed(s) for s in DEV_SEEDS]
-    return analyse(seeds), 'development (unscored, adversary trained on these seeds)'
+def development(seeds=DEV_SEEDS):
+    """Unscored run (development seeds by default, or unseen sanity seeds); writes nothing."""
+    by_level = {level: [run_seed(s, level=level) for s in seeds] for level in LEVELS}
+    result = analyse(by_level['exact'])
+    result['v3'] = compare(by_level)
+    return result, f'unscored seeds {seeds}' + (' (adversary trained on these seeds)' if seeds == DEV_SEEDS else '')
 
 
 def ci(v, digits=3):
     return f'{v["mean"]:.{digits}f} [{v["lower"]:.{digits}f},{v["upper"]:.{digits}f}]'
 
 
+def v3_table(result, label):
+    v3 = result['v3']
+    lines = [f'match-sim v3: availability granularity  plan {label}  seeds {result["seeds"][0]}-{result["seeds"][-1]}  matcher {v3["matcher"]}',
+             'privacy (health, condition vs none) vs precision; seed bootstrap 95% CIs',
+             '',
+             f'{"level":<20} {"health log-loss gain":<26} {"health AUC":<22} {"precision@" + str(K):<22} {"vs L0":<24} {"gate block rate":<22} violations']
+    for level in LEVELS:
+        r = v3['levels'][level]
+        lines.append(f'{LEVEL_NAMES[level]:<20} {ci(r["health"]["logloss_gain"]):<26} {ci(r["health"]["auc"]):<22} {ci(r["precision_at_k"]):<22} '
+                     f'{ci(r["precision_vs_exact"]):<24} {ci(r["gate_block_rate"]):<22} {r["constraint_violations"]}')
+    lines += ['', f'rule: {v3["rule"]}', f'default: {LEVEL_NAMES[v3["default"]]}']
+    return '\n'.join(lines)
+
+
 def table(result, label):
     seeds = result['seeds']
     gate = result['gate']
-    lines = [f'match-sim v2.1  plan {label}  seeds {seeds[0]}-{seeds[-1]} ({len(seeds)} x {N} fictional developers, {N * (N - 1) // 2} pairs each)  k={K}  threshold={THRESHOLD}',
+    lines = [f'L0 (exact) detail, v2.1 measures  plan {label}  seeds {seeds[0]}-{seeds[-1]} ({len(seeds)} x {N} fictional developers, {N * (N - 1) // 2} pairs each)  k={K}  threshold={THRESHOLD}',
              f'hidden label rate {result["label_rate"]:.3f}; 95% normal intervals across seeds; fixture agents, cost $0',
              '',
              f'{"matcher":<12} {"proposals/seed":<15} {"precision@k":<22} {"recall@k":<22} {"prec - " + BASELINE:<22} {"violations/seed":<16} {"direct leak":<12} calls/proposal']
@@ -683,6 +750,6 @@ def match_sim(provider='fixture', budget=0, dev=False):
         return json.dumps(live(budget), indent=2)
     if dev:
         result, label = development()
-        return table(result, label)
+        return v3_table(result, label) + '\n\n' + table(result, label)
     result, plan_digest = campaign()
-    return table(result, plan_digest[:16])
+    return v3_table(result, plan_digest[:16]) + '\n\n' + table(result, plan_digest[:16])

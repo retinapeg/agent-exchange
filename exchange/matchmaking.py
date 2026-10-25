@@ -17,6 +17,30 @@ OPTIONAL = {'employer', 'school'}
 PROTECTED = ('health', 'sexuality', 'religion', 'politics', 'ethnicity', 'address')
 PURPOSE = 'developer-introduction'
 
+# Availability granularity (match-sim v3). Exact tags let a counterpart infer health a little
+# (daytime availability is a proxy); coarser levels trade matching precision for privacy.
+AVAILABILITY_LEVELS = ('exact', 'day-part', 'week-part', 'none')
+DAY_PARTS = {'morning': ('morning', 'daytime'), 'afternoon': ('afternoon', 'daytime'), 'evening': ('evening', 'night')}
+
+
+def coarsen_availability(tags, level):
+    """Map availability tags to a granularity level. Returns None at 'none': the field is not shared.
+
+    day-part: morning/afternoon/evening; a tag naming no time of day (e.g. 'weekend') covers all three.
+    week-part: 'weekend' for tags that mention it, otherwise 'weekday'."""
+    if level == 'exact':
+        return sorted(tags)
+    if level == 'none':
+        return None
+    if level == 'week-part':
+        return sorted({'weekend' if 'weekend' in t else 'weekday' for t in tags})
+    if level == 'day-part':
+        parts = set()
+        for t in tags:
+            parts |= {part for part, words in DAY_PARTS.items() if any(w in t for w in words)} or set(DAY_PARTS)
+        return sorted(parts)
+    raise ValueError(f'unknown availability level {level!r}')
+
 
 class Profile(BaseModel):
     model_config = ConfigDict(extra='forbid', strict=True)
@@ -45,7 +69,9 @@ def propose(profiles, limit=40):
         goals = sorted(set(a.get('goals', [])) & set(b.get('goals', [])))
         available = sorted(set(a.get('availability', [])) & set(b.get('availability', [])))
         communication = sorted(set(a.get('communication', [])) & set(b.get('communication', [])))
-        if overlap and goals and available and communication:
+        # Availability is a hard constraint only when both cards state it (it may be withheld).
+        stated = bool(a.get('availability')) and bool(b.get('availability'))
+        if overlap and goals and (available or not stated) and communication:
             pairs.append({'participants': sorted([a['id'], b['id']]), 'shared_interests': overlap,
                           'shared_goals': goals, 'availability': available, 'communication': communication,
                           'status': 'proposal-only', 'contact_disclosed': False})
