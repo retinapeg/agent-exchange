@@ -164,3 +164,36 @@ Changes from v1:
   calls for 4 developers) and was not run.
 
 Invented population and compatibility model; fixture agents. Not real-user outcomes.
+
+## match-sim v2.1 metrics
+
+Frozen before the held-out rerun, 2026-10-25. Everything in "match-sim v2" stands; this section
+only adds measures. The plan's `schema_version` is `leo.match-sim.v2.1`, so it has a new plan
+hash and folder; the v1 and v2 campaigns are untouched. Same held-out seeds 1000–1009. The v2
+measures are recomputed unchanged and must reproduce the frozen v2 numbers.
+
+- (a) Precision@5 differences for every pair of matchers (panel − constrained, hybrid −
+  constrained, hybrid − panel). Paired bootstrap: resample the 10 held-out seeds with
+  replacement, 10,000 replicates, fixed random seed; percentile 95% interval of the mean
+  per-seed difference. The seed is the resampling unit because people within a seed share pairs.
+- (b) Weak-signal leakage for every attribute, per matcher information set:
+  - The adversary outputs probabilities: Laplace-smoothed development prior times the naive Bayes
+    likelihood raised to a weight w in {1, 1/2, 1/4, 1/8, 1/16, 1/32, 0}. w is chosen per
+    attribute by log-loss on development seed 2 after training on seeds 0–1, then the model is
+    retrained on seeds 0–2. w = 0 is the prior.
+  - Log-loss gain = mean log-loss of the smoothed development prior minus mean log-loss of the
+    adversary, in nats per person. 0 means no usable signal; it can be slightly negative from
+    noise.
+  - AUC for binary attributes (health, condition vs none): the probability a person with a
+    condition scores above one without.
+  - Intervals: the same seed bootstrap as (a).
+- Sanity checks, run on unseen seeds 5–7 before freezing:
+  - Planted health in the card (seed 5): log-loss gain +0.59, AUC 1.00. Required: clearly
+    positive on both.
+  - Built-in daytime-availability hint: health gain +0.015 to +0.051, AUC 0.62 to 0.73. With
+    availability removed from the view: gain −0.014 to +0.004, AUC 0.48 to 0.57. So the signal is
+    the hint. Required: a small positive value on (b); if absent, the report says so plainly.
+  - Independent protected controls (sexuality, religion, ethnicity, address): w = 0, gain 0.
+    Politics picks w = 1/4 and shows about ±0.003 noise.
+- Table additions to `./exchange.sh match-sim`: an (a) block and a (b) block; shareable attributes
+  are marked as expected.
