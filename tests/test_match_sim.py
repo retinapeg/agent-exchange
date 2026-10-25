@@ -1,6 +1,7 @@
 """Offline matching simulation: matchers, owner agents, privacy measures and frozen plan."""
 import pytest
 
+from exchange import match_sim as ms
 from exchange.matchmaking import propose, tag_overlap, panel, SPECIALISTS
 
 A = {'id': 'a', 'interests': ['python', 'physics'], 'goals': ['learn'], 'availability': ['weekend'], 'communication': ['async'], 'timezone': 'UTC'}
@@ -48,3 +49,51 @@ def test_panel_rejects_impersonated_specialist_and_out_of_range_p():
         panel({'profiles': [A, B], 'qa': {}}, ScriptedPanel(wrong_name=True))
     with pytest.raises(ValueError):
         panel({'profiles': [A, B], 'qa': {}}, ScriptedPanel(1.5))
+
+
+def test_population_is_seeded_with_unique_canaries():
+    first, again = ms.population(7, 50), ms.population(7, 50)
+    assert first == again and first != ms.population(8, 50)
+    canaries = [v for p in first for v in p['canaries'].values()]
+    assert len(set(canaries)) == len(canaries)
+    assert all(v in p['raw_context'] for p in first for v in p['canaries'].values())
+    assert all(p['hidden']['employer'] in ms.EMPLOYERS for p in first)
+
+
+def test_owner_profile_is_schema_valid_and_carries_no_private_material():
+    provider = ms.FixtureProvider()
+    for p in ms.population(3, 40):
+        outward = ms.owner_profile(provider, p)
+        text = repr(outward)
+        assert set(outward) <= ms.FIELDS | {'id'}
+        assert not any(v in text for v in p['canaries'].values())
+        assert not any(v in text for v in p['hidden'].values())
+    assert provider.calls == 40
+
+
+def test_gate_blocks_raw_context_and_counts_it():
+    p = ms.persona(1, 0)
+    assert ms.gate('commitment', {'topic': 'commitment', 'value': p['raw_context']}) is None
+    assert ms.gate('commitment', {'topic': 'seniority', 'value': 'junior'}) is None
+    assert ms.gate('seniority', {'topic': 'seniority', 'value': 'junior'}) == 'junior'
+
+    class Careless(ms.FixtureProvider):
+        def answer(self, payload):
+            return {'topic': payload['topic'], 'value': payload['persona']['raw_context']}
+    stats = {'blocked_answers': 0}
+    answers = ms.ask(Careless(), {'id': 'asker'}, p, stats)
+    assert stats['blocked_answers'] == 3 and set(answers.values()) == {'declined'}
+
+
+def test_question_limit_is_enforced():
+    class Greedy(ms.FixtureProvider):
+        def questions(self, payload):
+            return {'topics': list(ms.QUESTIONS)}
+    with pytest.raises(ValueError):
+        ms.ask(Greedy(), {'id': 'asker'}, ms.persona(1, 0), {'blocked_answers': 0})
+
+
+def test_labels_depend_only_on_personas_and_seed():
+    a, b = ms.population(2, 2)
+    assert ms.label(2, a, b) == ms.label(2, b, a)
+    assert 0 < ms.hidden_probability(a, b) < 1
