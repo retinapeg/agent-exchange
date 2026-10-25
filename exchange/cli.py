@@ -7,7 +7,7 @@ from exchange.common import config, init_config
 
 def main():
     parser = argparse.ArgumentParser(description="Local Agent Exchange")
-    parser.add_argument("command", choices=["init", "up", "down", "status", "serve", "supervise", "demo", "showcase", "browser-check", "test", "preflight", "live-pilot", "benchmark", "report", "mcp", "sdk-check", "testnet-init", "testnet", "restart-check", "live-safety"])
+    parser.add_argument("command", choices=["init", "up", "down", "status", "serve", "supervise", "demo", "showcase", "browser-check", "test", "preflight", "live-pilot", "benchmark", "report", "mcp", "sdk-check", "testnet-init", "testnet", "restart-check", "live-safety", "match-sim"])
     parser.add_argument("peer", nargs="?")
     parser.add_argument("--owner")
     parser.add_argument("--base-port", type=int, default=8710)
@@ -15,6 +15,9 @@ def main():
     parser.add_argument("--config")
     parser.add_argument('--live',action='store_true',help='Explicitly enable bounded authenticated CLI calls for showcase')
     parser.add_argument('--crash',action='store_true',help='Inject SIGKILL into the exact owned provider during restart-check')
+    parser.add_argument('--provider', choices=['fixture', 'claude'], default='fixture', help='match-sim agents; claude makes live model calls')
+    parser.add_argument('--budget', type=int, default=0, help='hard model-call budget for match-sim --provider claude')
+    parser.add_argument('--dev', action='store_true', help='match-sim on development seeds only; unscored, writes nothing')
     args = parser.parse_args()
     if args.command == "init":
         c = init_config(args.base_port)
@@ -51,6 +54,10 @@ def main():
     elif args.command == "mcp":
         from exchange.mcp_bridge import run
         return run()
+    elif args.command == "match-sim":
+        from exchange.match_sim import match_sim
+        print(match_sim(args.provider, args.budget, args.dev))
+        return
     elif args.command == "restart-check":
         from exchange.runtime_check import restart_check
         result = restart_check(args.crash)

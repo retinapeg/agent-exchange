@@ -1,4 +1,6 @@
 """Offline matching simulation: matchers, owner agents, privacy measures and frozen plan."""
+import json
+
 import pytest
 
 from exchange import match_sim as ms
@@ -97,3 +99,58 @@ def test_labels_depend_only_on_personas_and_seed():
     a, b = ms.population(2, 2)
     assert ms.label(2, a, b) == ms.label(2, b, a)
     assert 0 < ms.hidden_probability(a, b) < 1
+
+
+def test_run_seed_small_population_measures_every_matcher():
+    result = ms.run_seed(4, n=16)
+    assert set(result['metrics']) == set(ms.MATCHERS)
+    assert result['metrics']['constrained']['constraint_violations'] == 0
+    assert all(m['direct_leakage'] == 0 for m in result['metrics'].values())
+    assert sum(b[0] for b in result['calibration']) == result['pairs'] == 120
+    assert 'raw_context' not in repr(result) and 'MRN-' not in repr(result)
+
+
+def test_direct_leakage_detector_catches_a_leaky_owner_agent():
+    class Leaky(ms.FixtureProvider):
+        def profile(self, payload):
+            draft = super().profile(payload)
+            draft['profile']['interests'] = draft['profile']['interests'] + [payload['persona']['canaries']['mrn']]
+            return draft
+    result = ms.run_seed(4, Leaky(), n=10)
+    assert all(m['direct_leakage'] == 10 for m in result['metrics'].values())
+
+
+def test_campaign_freezes_plan_and_rejects_tampering(tmp_path, monkeypatch):
+    monkeypatch.setattr(ms, 'DATA', tmp_path)
+    monkeypatch.setattr(ms, 'N', 10)
+    monkeypatch.setattr(ms, 'HELDOUT_SEEDS', [1000, 1001])
+    monkeypatch.setattr(ms, '_ADVERSARIES', {})
+    first, plan_digest = ms.campaign()
+    assert first['disk_scan_leaks'] == 0 and first['seeds'] == [1000, 1001]
+    assert ms.campaign()[0] == first  # reuses immutable seed records
+    assert 'precision@k' in ms.table(first, plan_digest[:16])
+    folder = tmp_path / 'experiments' / ('match-sim-' + plan_digest[:16])
+    record = folder / 'seeds' / '1000.json'
+    value = json.loads(record.read_text())
+    value['result']['label_rate'] = 0.99
+    record.write_text(json.dumps(value))
+    with pytest.raises(ValueError, match='checksum'):
+        ms.campaign()
+    monkeypatch.setattr(ms, 'K', 3)  # a changed constant is a different campaign, never the same one
+    assert ms.plan() != json.loads((folder / 'plan.json').read_text())
+
+
+def test_live_provider_refuses_short_budget_and_stops_at_budget(tmp_path, monkeypatch):
+    monkeypatch.setattr(ms, 'DATA', tmp_path)
+    with pytest.raises(ValueError, match='needs'):
+        ms.live(budget=5, n=3)
+    fixture = ms.FixtureProvider()
+    def fake(prompt, schema, trace, operation):
+        assert trace.startswith('match-sim-')
+        return fixture.complete(operation, json.loads(prompt.split('Input JSON:\n', 1)[1]))
+    result = ms.live(budget=ms.live_calls_needed(3), n=3, call=fake)
+    assert result['calls'] == ms.live_calls_needed(3)
+    provider = ms.ClaudeProvider(1, 'x', fake)
+    provider.complete('questions', {'peer': {}})
+    with pytest.raises(RuntimeError, match='budget'):
+        provider.complete('questions', {'peer': {}})
