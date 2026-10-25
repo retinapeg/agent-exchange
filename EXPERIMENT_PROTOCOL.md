@@ -244,3 +244,46 @@ same population, owner agents, matchers and adversary design.
   L0 +0.036 / 0.68, L1 +0.010 / 0.58, L2 +0.004 / 0.57 (gain CI includes 0, AUC CI does not
   include 0.5), L3 −0.006 / 0.52; hybrid precision@5 0.42, 0.31, 0.33, 0.31; gate block rate
   3.0–3.1% at every level; 0 violations. On those seeds the rule picks L3.
+
+## match-sim v4: private overlap
+
+Frozen before the held-out run, 2026-10-25. Final simulation run. Everything in v2–v3 stands. The
+plan's `schema_version` is `leo.match-sim.v4` (new plan hash and folder). Same held-out seeds
+1000–1009 and population; the campaign reruns every v3 level, and v3 must reproduce.
+
+- Condition `private-overlap` (v4): cards are L3, with no availability. Availability stays with each
+  owner's agent. For a candidate pair the Exchange asks one yes/no question, "do our availabilities
+  overlap?", answered from both private fields (`propose(..., private_overlap=...)`). The question is
+  asked only for pairs that already pass the card constraints (shared interest, goal and
+  communication), at most once per pair; constrained and hybrid share the same answers. A "no"
+  removes the pair, replacing the card availability constraint. Slots are never shown. The panel
+  (not compared here) gets no answers.
+- Attacker (for the v4 table, applied the same way to L0, L3 and v4): it sees everything the matcher
+  sees. That is the person's card, the gated Q&A for hybrid and, for v4, every overlap answer the
+  matcher received, which is the same per-pair budget. From the answers it uses the person's own
+  yes-rate and the mean yes-rate of their yes-neighbours (deciles).
+  - Model: binary naive Bayes on health (condition vs none).
+  - Fitting: nested 5-fold cross-validation on each held-out seed. The inner CV chooses a feature
+    family (one field, or all) and a likelihood weight from the v2.1 set by log-loss.
+  - Measures: log-loss gain is against each training fold's smoothed prior. AUC ranks the
+    out-of-fold evidence term only, so a prior-only attacker scores exactly 0.5.
+  - This differs from the v3 adversary (trained on development seeds), so the v4 table's L0 and L3
+    health numbers are not the v3 numbers.
+- Report, for constrained and hybrid at L0, L3 and v4: health AUC and log-loss gain;
+  precision@5 and its paired difference from L0. All use the seed bootstrap (10,000 replicates,
+  95% percentile CI).
+- Decision rule (pre-registered, `decide_v4`), on the hybrid matcher: v4 becomes the default if its
+  health AUC CI includes 0.5 and it recovers at least half of the L3 precision loss:
+  mean(v4) − mean(L3) ≥ 0.5 × (mean(L0) − mean(L3)), using point estimates. Otherwise L3 (the v3
+  default) stays. Constrained is reported, not decided on.
+- Secondary measure, not in the rule: a lying counterpart sets its own private availability to
+  weekday-daytime and asks each person once (same one-question budget), with the same CV attacker.
+- Applying the default: if v4 wins, stored profiles keep availability private and matching uses the
+  yes/no overlap; if L3 stays, the code keeps the v3 default. Either way the campaign is rerun if a
+  source digest changes and must reproduce.
+- Sanity run on unseen seeds 5–7 before freezing (hybrid):
+  - Health AUC: L0 0.69 / 0.59 / 0.76; L3 0.48 / 0.52 / 0.57; v4 0.60 / 0.56 / 0.64. The
+    attacker mostly picks the availability family at L0 and the neighbour-rate family at v4.
+  - Lying prober AUC: 0.66 / 0.64 / 0.71.
+  - v4 hybrid precision@5 equals L0 on all three seeds (0.458, 0.378, 0.423).
+  - 0 violations.
