@@ -53,3 +53,59 @@ penalty to the reliability/UCB score. Offline latency remains simulated; runtime
 records actual local task timings. The updated offline source manifest includes the shared
 canonical JSON helper used by the verifier, and creates a new campaign without replacing
 the original raw trials. Operational selection history is selection-biased.
+
+## Match simulation (Phase A of MATCH_PLAN.md)
+
+Frozen before the held-out run, 2026-10-25. Executable definition: `exchange/match_sim.py`
+(constants `N`, `K`, `THRESHOLD`, seeds), with `exchange/matchmaking.py`. The plan digest covers
+those files, `exchange/common.py`, `exchange/benchmark.py` and this file; any change creates a
+new campaign folder under `local_data/experiments/match-sim-<plan-hash>/`.
+
+- Population: 200 seeded fictional developers per seed. Each private persona has raw context with
+  three canaries (`MRN-dddd-XX`, a made-up `<n> <Name> Lane`, an exact `£` salary) and three hidden
+  attributes: health, employer, borough. Health and employer are generated to correlate with
+  shareable fields (a realistic inference channel); borough is independent (a control).
+  Personas are regenerated from the seed and never written to disk.
+- Labels: a hidden compatibility model over latent facts (true interests, goals, availability,
+  communication, timezone, commitment, seniority) gives p; the label is one keyed Bernoulli draw
+  per pair. Some latent facts reach the matchers only through Q&A, some never. Matchers never see
+  personas, p or labels. Development label rate is about 6%.
+- Owner agents (fixture by default): draft the outward `Profile`, drop some true interests, add
+  noise, withhold timezone for some owners; answer at most 3 questions. The Exchange gate passes
+  only enumerated profile-level answers; anything else is blocked, replaced by `declined` and
+  counted. The fixture agent tries to paste raw context into 3% of answers to exercise the gate.
+- Matchers, on the same 19,900 pairs per seed: `tag-overlap` (any shared interest, ranked by
+  Jaccard), `constrained` (existing `propose`: shared interests, goals, availability and
+  communication), `panel` (Compatibility, Friction, Timing, Devil's Advocate, Director; p with
+  dissent; introduce when p >= 0.5). Only the panel reads Q&A. Fixture panel roles are
+  unvalidated heuristics over profiles and Q&A.
+- Seeds: development 0–2 (tuning, tests, adversary background knowledge); held-out 1000–1009.
+- Measures per matcher, per seed, then mean and normal-approximation 95% intervals across the 10
+  held-out seeds:
+  - precision@5: per person, share of their top-5 proposed partners with a positive label,
+    averaged over people with at least one proposal; recall@5: positives retrieved in the top 5
+    over all their positives, averaged over people with at least one positive. Paired difference
+    in precision@5 versus `tag-overlap` within seed.
+  - calibration (panel only; pooled pairs): p in ten 0.1 bins vs observed label rate. The other
+    matchers give no probability (n/a).
+  - direct leakage: count of scored-persona canaries found by pattern in anything outside the
+    owner agents (outward profiles, matcher outputs, every gated Q&A answer), plus a scan of
+    every file in the run folder.
+  - inference leakage: a naive Bayes adversary trained only on development-seed personas sees
+    what one counterpart sees about each person (outward profile, plus that person's Q&A answers
+    for the panel) and guesses each hidden attribute. Report accuracy minus the majority-class
+    base rate in the scored population. Privacy holds near 0; the borough control should be ~0.
+  - constraint violations (proposed pairs lacking a shared goal, availability or communication
+    value), proposals per seed, model calls per proposal (fixture calls counted as would-be model
+    calls, including all-pairs Q&A and panel calls) and cost per proposal ($0 for fixture).
+- Table columns, as printed by `./exchange.sh match-sim`: matcher, proposals/seed, precision@k,
+  recall@k, precision minus tag-overlap, violations/seed, direct leak, calls/proposal,
+  cost/proposal; then inference advantage for health, employer, borough; then the panel
+  calibration table and the gate count.
+- Not in this run: stateless vs persistent owner agents; neutral vs pressured incentive.
+  `--provider claude --budget N` is a separate unscored live development run on 4 developers
+  from seed 0 (82 calls), refused before any call when the budget is lower; it is never mixed
+  into the frozen table.
+
+This is an invented population and an invented compatibility model. Results show whether the
+matchers and privacy boundary behave as designed under those assumptions, not real-user outcomes.
