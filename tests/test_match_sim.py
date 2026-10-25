@@ -287,3 +287,16 @@ def test_v3_decision_rule_picks_the_finest_level_with_no_detectable_health_signa
     assert ms.decide({'exact': leak, 'day-part': half, 'week-part': clean, 'none': clean}) == 'week-part'
     assert ms.decide({'exact': leak, 'day-part': leak, 'week-part': leak, 'none': leak}) == 'none'
     assert ms.decide(dict.fromkeys(ms.LEVELS, clean)) == 'exact'
+
+
+def test_disclosure_store_applies_the_v3_availability_default(tmp_path):
+    from exchange.matchmaking import AVAILABILITY_DEFAULT, FIELDS, PURPOSE, DisclosureStore
+    from exchange.verification import verify
+    assert AVAILABILITY_DEFAULT == 'none'
+    store = DisclosureStore(tmp_path / 'profiles.sqlite')
+    created = [store.create({k: v for k, v in A.items() if k != 'id'}, sorted(FIELDS), f'{i}@example.invalid', PURPOSE) for i in 'xy']
+    assert all('availability' not in c['disclosure_preview'] for c in created)
+    outward = store.outward()
+    assert all('availability' not in p for p in outward)
+    result = propose(outward)
+    assert len(result['proposals']) == 1 and verify({'service': 'match', 'profiles': outward}, result)['accepted']

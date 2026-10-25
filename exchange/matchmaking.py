@@ -20,6 +20,9 @@ PURPOSE = 'developer-introduction'
 # Availability granularity (match-sim v3). Exact tags let a counterpart infer health a little
 # (daytime availability is a proxy); coarser levels trade matching precision for privacy.
 AVAILABILITY_LEVELS = ('exact', 'day-part', 'week-part', 'none')
+# Chosen by the pre-registered match-sim v3 rule (MATCHMAKING_REPORT.md): no coarser level removed
+# the health signal, so stored profiles do not share availability. The simulation passes levels explicitly.
+AVAILABILITY_DEFAULT = 'none'
 DAY_PARTS = {'morning': ('morning', 'daytime'), 'afternoon': ('afternoon', 'daytime'), 'evening': ('evening', 'night')}
 
 
@@ -42,11 +45,18 @@ def coarsen_availability(tags, level):
     raise ValueError(f'unknown availability level {level!r}')
 
 
+def apply_availability_default(profile, level=AVAILABILITY_DEFAULT):
+    """The profile as stored and shared: availability coarsened to the default level, or dropped."""
+    rest = {k: v for k, v in profile.items() if k != 'availability'}
+    coarse = coarsen_availability(profile.get('availability') or [], level)
+    return rest if coarse is None else {**rest, 'availability': coarse}
+
+
 class Profile(BaseModel):
     model_config = ConfigDict(extra='forbid', strict=True)
     interests: list[str] = Field(max_length=20)
     goals: list[str] = Field(max_length=20)
-    availability: list[str] = Field(max_length=20)
+    availability: list[str] = Field(default_factory=list, max_length=20)  # not stored at the v3 default
     communication: list[str] = Field(max_length=20)
     timezone: str = Field(max_length=50)
     employer: str | None = Field(default=None, max_length=80)
@@ -161,6 +171,7 @@ class DisclosureStore(Database):
             raise ExchangeFailure('policy', 'invalid disclosure purpose or fields')
         if not isinstance(contact, str) or not contact.endswith('@example.invalid'):
             raise ExchangeFailure('policy', 'synthetic example.invalid contact required')
+        profile = apply_availability_default(profile)
         identity, token = uid(), secrets.token_urlsafe(32)
         with self.tx() as db:
             db.execute('INSERT INTO profiles VALUES(?,?,?,?,?,0)', (identity, canonical(profile).decode(), canonical(approved_fields).decode(), contact, digest(token.encode())))

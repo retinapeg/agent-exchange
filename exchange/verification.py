@@ -81,9 +81,12 @@ def verify(request, artifact):
             for i, left in enumerate(profiles):
                 for right in profiles[i+1:]:
                     intersections = {field: sorted(set(left.get(field, [])) & set(right.get(field, []))) for field in ("interests", "goals", "availability", "communication")}
+                    # Availability is required only when both profiles state it (matchmaking.propose).
+                    if not (left.get("availability") and right.get("availability")):
+                        intersections.pop("availability")
                     if all(intersections.values()):
                         expected.append({"participants": sorted([left["id"], right["id"]]), "shared_interests": intersections["interests"], "shared_goals": intersections["goals"],
-                                         "availability": intersections["availability"], "communication": intersections["communication"], "status": "proposal-only", "contact_disclosed": False})
+                                         "availability": intersections.get("availability", []), "communication": intersections["communication"], "status": "proposal-only", "contact_disclosed": False})
             exact = {"purpose": "developer-introduction", "proposals": sorted(expected, key=lambda p: p["participants"]),
                      "identity": "synthetic pseudonymous; not anonymous", "consent": "separate explicit consent from both profile owners required"}
             if not same_json(artifact, exact):
