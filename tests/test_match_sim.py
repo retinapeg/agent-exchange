@@ -228,3 +228,15 @@ def test_live_provider_refuses_short_budget_and_stops_at_budget(tmp_path, monkey
     provider.complete('questions', {'peer': {}})
     with pytest.raises(RuntimeError, match='budget'):
         provider.complete('questions', {'peer': {}})
+
+
+def test_results_do_not_depend_on_python_hash_seed():
+    # Set iteration order changes with PYTHONHASHSEED; cards, consent and adversary choices must not.
+    import os
+    import subprocess
+    import sys
+    code = ('import json; from exchange import match_sim as ms; f = ms.FixtureProvider(); '
+            'print(json.dumps([ms.owner_profile(f, p) for p in ms.population(1000, 60)]))')
+    outputs = {subprocess.run([sys.executable, '-c', code], capture_output=True, text=True, check=True,
+                              env={**os.environ, 'PYTHONHASHSEED': h}).stdout for h in ('0', '1', '2', '3')}
+    assert len(outputs) == 1

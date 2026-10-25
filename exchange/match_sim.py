@@ -13,7 +13,7 @@ from collections import Counter, defaultdict
 from itertools import combinations
 
 from exchange.common import DATA, ROOT, digest, write_json
-from exchange.matchmaking import FIELDS, OPTIONAL, PROTECTED, Profile, hybrid, panel, propose, tag_overlap
+from exchange.matchmaking import FIELDS, PROTECTED, Profile, hybrid, panel, propose, tag_overlap
 
 INTERESTS = ['python', 'rust', 'typescript', 'go', 'ml', 'physics', 'data-viz', 'compilers',
              'web', 'devops', 'security', 'robotics', 'databases', 'mobile', 'games', 'open-source']
@@ -145,7 +145,8 @@ class FixtureProvider:
                    'communication': latent['communication'], 'timezone': latent['timezone'],
                    'employer': p['shareable']['employer'], 'school': p['shareable']['school']}
         withheld = {'timezone'} if r.random() < 0.15 else set()
-        withheld |= {f for f in OPTIONAL if r.random() >= CONSENT[f]}
+        # Fixed order (set order varies per process). School first is the order the frozen v2 run used.
+        withheld |= {f for f in ('school', 'employer') if r.random() >= CONSENT[f]}
         return {'profile': profile, 'approved_fields': sorted(FIELDS - withheld)}
 
     def questions(self, payload):
