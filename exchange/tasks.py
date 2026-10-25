@@ -12,6 +12,16 @@ from exchange.common import Database, NS, canonical, digest, now, uid
 TERMINAL = {"TASK_STATE_COMPLETED", "TASK_STATE_FAILED", "TASK_STATE_CANCELED", "TASK_STATE_REJECTED"}
 INTERRUPTED = TERMINAL | {"TASK_STATE_INPUT_REQUIRED", "TASK_STATE_AUTH_REQUIRED"}
 
+# Local worker transitions, not a claim about every transition allowed by A2A.
+# submit() alone admits/versions input and returns an input-required task to submitted.
+# Payment authorization remains a separate ledger/approval workflow.
+TRANSITIONS = {
+    "TASK_STATE_SUBMITTED": {"TASK_STATE_WORKING", "TASK_STATE_FAILED", "TASK_STATE_CANCELED", "TASK_STATE_REJECTED"},
+    "TASK_STATE_WORKING": TERMINAL | {"TASK_STATE_WORKING", "TASK_STATE_INPUT_REQUIRED", "TASK_STATE_AUTH_REQUIRED"},
+    "TASK_STATE_INPUT_REQUIRED": {"TASK_STATE_FAILED", "TASK_STATE_CANCELED", "TASK_STATE_REJECTED"},
+    "TASK_STATE_AUTH_REQUIRED": {"TASK_STATE_FAILED", "TASK_STATE_CANCELED", "TASK_STATE_REJECTED"},
+}
+
 
 def proto(data, cls):
     return ParseDict(data, cls())
@@ -87,8 +97,15 @@ class TaskStore(Database):
     def transition(self, task_id, state, *, text=None, artifact=None, failure=None):
         with self.tx() as db:
             row = db.execute("SELECT * FROM tasks WHERE id=?", (task_id,)).fetchone()
+            if not row:
+                raise TaskNotFoundError()
             if row["state"] in TERMINAL:
+                # Duplicate/losing finalizers must not append artifacts or events.
                 return False
+            if state not in TRANSITIONS.get(row["state"], set()):
+                raise InvalidParamsError(f"Invalid task transition: {row['state']} -> {state}; input-required tasks need a new submission")
+            if (artifact is not None) != (state == "TASK_STATE_COMPLETED"):
+                raise InvalidParamsError("Completion requires an artifact; other transitions cannot publish one")
             body = json.loads(row["body"])
             status = {"state": state, "timestamp": now()}
             if text:

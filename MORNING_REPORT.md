@@ -1,5 +1,84 @@
 # Morning report — Agent Exchange
 
+## Current checkpoint — approval expiry and insufficient budgets, 24 October 2026
+
+**Complete; stop at review.** Two minimal reporting repairs, 21 new regression cases,
+**131 tests passing**, all services offline. No live model calls, external services,
+real transfers, commits or pushes. The prior lifecycle implementation is preserved.
+
+### Changes and established behavior
+
+- `exchange/coordinator.py`: distinguish an eligible but unaffordable quote set from
+  missing providers. Persist the task cap/lowest eligible quote and a new-request remedy.
+- `exchange/commerce.py`: preserve an explicit ledger settlement 409 through the provider.
+  The buyer now records payment refusal instead of a fabricated transport uncertainty.
+- `tests/test_approval_budget.py`: production ASGI handlers/guards and SQLite under a
+  controlled quote clock and in-process HTTP transport. No production clock seam or new
+  payment subsystem. learning.md, decisions.md and README explain the verified behavior.
+
+New tests cover exact expiry (one microsecond before, exactly at, after), expiry while
+pending and between approval/reservation/settlement, replacement approval binding, and
+reconciliation after settled responses are lost and the quote expires. Financial records,
+held exposure and absence of provider admission are checked. Valid holds require explicit
+release/reconciliation; expired pending evidence is preserved, not silently refreshed.
+
+Budget tests use actual offered prices: below every offer, one below/exactly equal to a
+chosen offer, mixed affordable selection, repeated refusal, immutable-budget conflict,
+and run/provider/global caps counting reserved, authorised and settled exposure.
+Positive cases remain useful; committed receipts replay without another debit.
+
+### Reproduce and inspect evidence
+
+```sh
+cd /Users/leo/Projects/agent-exchange
+.venv/bin/python -c "from exchange.evidence import check; raise SystemExit(check(name='approval-budget-focused', paths=('tests/test_approval_budget.py', 'tests/test_payments.py', 'tests/test_coordinator.py')))"
+# 36 passed in 7.12s; exit 0, no skips
+./exchange.sh test
+# 131 passed in 27.60s; exit 0, no skips
+```
+
+Receipts:
+- `local_data/receipts/approval-budget-focused-c3d2101e-fcd2-4169-8e31-27164f97ca4d`
+- `local_data/receipts/tests-64181929-4862-45b7-bab8-404c94456d9e`
+
+Fresh baseline was 15 passing payment/coordinator checks. Before repair, new regressions
+had 3 failures (15 passed); focused expiry confirmation had 1 failure (2 passed). Both
+commands exited 1, with owned services stopped. These were product error-reporting defects,
+not overspending or infrastructure failures. Exact commands, errors, receipt paths and
+resolution are in learning.md; failed evidence remains preserved. The full suite was run
+once after the final repair and includes existing local HTTP/Chrome tests. No old campaign
+or live pilot was rerun.
+
+### Git, cleanup and remaining limits
+
+Still `main` at `e6cce9e`; nothing staged, committed or pushed. Six tracked modifications
+and six untracked files include all prior work. The prior task guard, browser/demo/finalization
+tests and AGENTS.md are byte-identical to startup. Today's new source archive and fingerprints:
+`.cache/approval-budget-audit-20261024T132531Z/`. **All 3,209 primary files and 270 pre-existing
+receipt files are unchanged**, with no new primary files. Primary and all five isolated
+runtimes were checked offline, no validation processes remain, and `git diff --check` passed.
+
+Expiry tests use controlled in-process transport; they do not prove distributed clocks,
+power-failure behavior or production security. Local attempt markers may remain uncertain
+until reconciliation even when the current request is explicitly refused; only the ledger
+and its receipt determine financial effects. Public settlement, real accounts/users and
+actual Leo OS/Continuum remain gated. No new ledger hard-crash or async-result work occurred.
+
+**One next proposal, requiring a new task:** a bounded operator release/reconciliation
+workflow for expired holds, preserving the original order and receipt. Do not start it now.
+
+Prior lifecycle checkpoint: learning.md's historical section and
+`local_data/receipts/lifecycle-handoff-3499e439-e4a1-424c-b5be-5a091f9575cb/source.tar.gz`.
+That archive retains the earlier MORNING_REPORT and its failures/outcomes. The overnight
+handoff below is older provenance, not authorization to execute its live commands.
+
+---
+
+## Historical overnight handoff — 20 October 2026 (retained provenance)
+
+The statements and optional live commands below describe the previous run. They do not
+authorize fresh model calls, startup or external work. Use the current checkpoint above.
+
 The local demonstration works. The overnight continuation preserved the existing system
 and closed the main usability gaps: interactive task submission, real provider comparison,
 operator payment approval, connected HTTP spans, and repeatable validation with isolated wallets.

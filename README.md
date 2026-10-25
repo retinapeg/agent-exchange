@@ -29,6 +29,9 @@ Use **New task** to submit a document or CSV. Requirements can run through real 
 CSV audits use the deterministic provider. The buyer compares three requirement offers
 (3, 5 and 8 simulated credits) and maintains separate fixture/live outcome history.
 For paid UI requests, review and approve the exact task and quote before any credits move.
+If all eligible quotes exceed the task cap, the rejection names the cap and lowest quote;
+changing terms requires a new request. Expiry blocks new approval/settlement, while a
+previously settled operation still replays its original receipt without another charge.
 Do not publish the config or raw local receipts. The browser smoke test uses installed
 Chrome in an isolated repository-local profile; it does not use your normal browser profile.
 
@@ -133,4 +136,6 @@ share one local OS account. No other personal repository was modified or connect
 Read [STANDARDS.md](STANDARDS.md), [ARCHITECTURE.md](ARCHITECTURE.md),
 [SECURITY.md](SECURITY.md), [PAYMENT_MODE_REPORT.md](PAYMENT_MODE_REPORT.md),
 [INTEROPERABILITY_REPORT.md](INTEROPERABILITY_REPORT.md) and [TEST_REPORT.md](TEST_REPORT.md)
-for exact evidence and limitations. All changes are intentionally uncommitted.
+for exact evidence and limitations. For the current continuation checkpoint and durable
+choices, read [learning.md](learning.md) and [decisions.md](decisions.md). The initial
+implementation is committed; the latest lifecycle hardening remains uncommitted for review.

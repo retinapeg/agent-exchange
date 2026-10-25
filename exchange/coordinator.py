@@ -204,7 +204,12 @@ class Coordinator:
                         candidates=await self.offers(task,listings,run_id,value.get('payment_mode','free'))
                         if value.get('provider'): candidates=[p for p in candidates if p['peer']==value['provider']]
                         if value.get('payment_mode')=='simulator':
-                            candidates=[p for p in candidates if p['price']<=value.get('max_credits',self.c['limits']['per_task'])]
+                            cap=value.get('max_credits',self.c['limits']['per_task'])
+                            affordable=[p for p in candidates if p['price']<=cap]
+                            if candidates and not affordable:
+                                lowest=min(p['price'] for p in candidates)
+                                raise ExchangeFailure('policy',f'No eligible quote fits task budget of {cap} CREDIT; lowest eligible quote is {lowest} CREDIT. Submit a new request to change budget or provider.')
+                            candidates=affordable
                         preferred={'requirements':'requirements','csv-audit':'csv','verify':'verifier','match':'verifier'}[task['service']]
                         history=self.history(task['service'],task.get('backend','fixture'))
                         for p in candidates:

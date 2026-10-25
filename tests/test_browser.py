@@ -47,6 +47,11 @@ async def test_actual_desktop_mobile_dashboard(tmp_path, monkeypatch):
             await expect(run.locator('.run-status')).to_have_text('verified',timeout=15000)
             await run.locator('summary').first.click()
             await expect(run.locator('.decision-table tr')).to_have_count(4)
+            await expect(run.locator('.details-grid')).to_contain_text('leo.sim.receipt.v1')
+            await run.get_by_role('button', name='Show trace', exact=True).click()
+            await expect(page.locator('#trace-filter')).to_have_value(run_id)
+            await expect(page.locator('#event-list')).to_contain_text('payment.settled')
+            await page.locator('#timeline').screenshot(path=str(folder/'trace.png'))
             # A repeat click must retain the original operation even after refresh.
             await page.get_by_role('button',name='Submit task',exact=True).click()
             await expect(page.locator('#submission-status')).to_contain_text(run_id)
@@ -75,6 +80,7 @@ async def test_actual_desktop_mobile_dashboard(tmp_path, monkeypatch):
             write_json(folder/'receipt.json',{'browser':'installed Google Chrome in isolated headless profile','desktop':[1440,1000],'mobile':[390,844],
                 'authenticated_live_data':True,'provider_cards':3,'artifact_expansion':True,'horizontal_overflow':False,'logout_revokes_session':True,'page_errors':errors})
             write_json(folder/'workflow.json',{'paid_run_id':run_id,'free_csv_run_id':csv_id,'real_http':True,'models_invoked':False,
-                'exact_quote_approval':True,'deduplicated_submission':True,'expanded_state_retained':True,'both_verified':True})
+                'exact_quote_approval':True,'deduplicated_submission':True,'expanded_state_retained':True,'both_verified':True,
+                'simulated_receipt_visible':True,'payment_trace_visible':True})
         finally:
             await context.close()

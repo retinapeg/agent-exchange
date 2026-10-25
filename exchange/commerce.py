@@ -136,6 +136,10 @@ def add_commerce(app, peer, store):
             db.execute("INSERT INTO payment_attempts VALUES(?,?,?) ON CONFLICT(order_id) DO UPDATE SET state=excluded.state", (order_id, "outcome-unknown", q.quote_id))
         # Idempotent settlement validates the original authorization even on retries.
         response = await client.http("ledger", "POST", f"/orders/{order_id}/settle", json={k: payment.payload[k] for k in ("binding", "authorization")})
+        if response.status_code == 409:
+            # A known refusal (e.g. expired terms) is not a transport outage.
+            # Keep the original attempt for reconciliation; only the ledger owns effects.
+            return JSONResponse(response.json(), 409)
         response.raise_for_status()
         receipt = response.json()
         with store.tx() as db:
