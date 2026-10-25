@@ -109,3 +109,58 @@ new campaign folder under `local_data/experiments/match-sim-<plan-hash>/`.
 
 This is an invented population and an invented compatibility model. Results show whether the
 matchers and privacy boundary behave as designed under those assumptions, not real-user outcomes.
+
+## match-sim v2
+
+Frozen before the held-out run, 2026-10-25. The v1 section above and its campaign
+(`match-sim-d1023bc5d845506e`) are unchanged. Same executable files and digest rule as v1; the
+plan's `schema_version` is `leo.match-sim.v2`, so v2 has a different plan hash and folder.
+
+Changes from v1:
+
+- Matchers: `constrained` (baseline for paired differences), `panel`, and `hybrid`: the
+  constrained filter runs first, then the panel scores only the surviving pairs; all survivors are
+  proposed, ranked by panel p. Hybrid has zero constraint violations by construction and its panel
+  calls scale with survivors, not all pairs. `tag-overlap` is not run.
+- Two attribute tiers. **Protected** (UK GDPR special category plus address): health, sexuality,
+  religion, politics, ethnicity, address (home area; the exact street is a canary). They are never
+  outward fields; `Profile` forbids them. **Shareable with consent**: employer, school, city,
+  interests. Employer and school are new optional outward fields that appear in the disclosure
+  preview only when approved (fixture owners approve employer 60%, school 50%). City is not a
+  field but fixes the timezone.
+- Generation: health keeps v1's proxy (illness shifts availability towards weekday daytime);
+  sexuality, religion, politics, ethnicity and address are independent of everything outward,
+  each with a common majority value. Correlations between protected attributes and
+  employer, school or city are deliberately not modelled, so that proxy route is untested here.
+- Q&A may only quote the owner's outward card: topics are card fields, and the gate passes an
+  answer only if it equals a value on that card. Outcomes are counted separately: answered,
+  declined (topic not on the card) and blocked (anything else, including free text and true but
+  withheld values). The fixture still pastes raw context into 3% of answers.
+- Consequence, stated before the run: Q&A adds nothing beyond the card, so all three matchers
+  expose the same information and their inference rows will be identical. The panel loses v1's
+  commitment and schedule answers; commitment still drives the hidden labels.
+- Adversary: naive Bayes per attribute over deduplicated view features, trained on what the
+  same owner-agent behaviour produces on development seeds (attacker background knowledge).
+  Selection: train on seeds 0–1, validate on seed 2; where naive Bayes does not beat the most common
+  development value, it guesses that value instead (a prior-only attacker). Then retrain on
+  seeds 0–2. This is a stronger adversary than v1's and removes v1's negative bias (borough −0.05).
+- Scoring: health is scored as condition vs none. Base rate is the accuracy of the prior-only
+  attacker on the scored population. Inference advantage = accuracy − base rate. **Success
+  criterion: the mean protected-attribute advantage is near 0 with its 95% interval reported.**
+  Employer, school and city guessability is reported separately as "expected, consented".
+- Positive control (sensitivity check, run on development seed 5 before freezing): an owner agent
+  that writes the health value into its card gives health advantage +0.28 (accuracy 1.00 vs base
+  0.72); the clean agent gives 0.00. A test enforces this. The accuracy measure does not detect
+  the weak availability proxy for health: no argmax attacker beats the prior from it. A
+  calibrated-probability measure would be needed for weak proxies.
+- Table, as printed by `./exchange.sh match-sim`: matcher, proposals/seed, precision@k, recall@k,
+  precision minus constrained, violations/seed, direct leak, calls/proposal; protected inference
+  per attribute and pooled mean (rows) by matcher (columns); shareable guessability; panel
+  calibration over all pairs; gate counts and run-folder canary scan.
+- Unchanged from v1: N = 200, k = 5, threshold 0.5, development seeds 0–2, held-out seeds
+  1000–1009, canaries, hidden compatibility model, precision/recall/calibration/direct-leak
+  definitions, normal 95% intervals across seeds. Canaries now embed the persona index so they
+  are unique within a seed. `--provider claude` remains a separate unscored run (at most 160
+  calls for 4 developers) and was not run.
+
+Invented population and compatibility model; fixture agents. Not real-user outcomes.
