@@ -10,7 +10,11 @@ from pydantic import BaseModel, ConfigDict, Field
 from exchange.common import Database, canonical, digest, uid
 from exchange.failures import ExchangeFailure
 
-FIELDS = {'interests', 'goals', 'availability', 'communication', 'timezone'}
+# Outward fields. employer and school are optional and shared only when the owner approves them.
+FIELDS = {'interests', 'goals', 'availability', 'communication', 'timezone', 'employer', 'school'}
+OPTIONAL = {'employer', 'school'}
+# UK GDPR special-category data plus exact address: never outward fields (Profile forbids extras).
+PROTECTED = ('health', 'sexuality', 'religion', 'politics', 'ethnicity', 'address')
 PURPOSE = 'developer-introduction'
 
 
@@ -21,6 +25,8 @@ class Profile(BaseModel):
     availability: list[str] = Field(max_length=20)
     communication: list[str] = Field(max_length=20)
     timezone: str = Field(max_length=50)
+    employer: str | None = Field(default=None, max_length=80)
+    school: str | None = Field(default=None, max_length=80)
 
 
 def propose(profiles, limit=40):
@@ -32,7 +38,7 @@ def propose(profiles, limit=40):
         if not isinstance(p, dict) or set(p) - (FIELDS | {'id'}) or not isinstance(p.get('id'), str) or p['id'] in ids:
             raise ValueError('invalid or duplicate outward profile')
         ids.add(p['id'])
-        Profile.model_validate({k: p.get(k, [] if k != 'timezone' else '') for k in FIELDS})
+        Profile.model_validate({k: p.get(k, None if k in OPTIONAL else '' if k == 'timezone' else []) for k in FIELDS})
     pairs = []
     for a, b in combinations(profiles, 2):
         overlap = sorted(set(a.get('interests', [])) & set(b.get('interests', [])))
