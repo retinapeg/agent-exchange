@@ -48,6 +48,9 @@ PROTECTED_VALUES = {
 AREAS = ['Hackney', 'Camden', 'Islington', 'Lambeth', 'Southwark', 'Tower Hamlets']
 STREETS = ['Quillbrook', 'Marrowgate', 'Feltham Rise', 'Osprey Yard', 'Lindqvist', 'Corran']
 TARGETS = PROTECTED + SHAREABLE
+VALUES = {'health': ['none', 'condition'], **{k: v for k, (v, _) in PROTECTED_VALUES.items()}, 'address': AREAS,
+          'employer': list(EMPLOYERS), 'school': SCHOOLS, 'city': list(CITIES)}
+BINARY = [a for a in TARGETS if len(VALUES[a]) == 2]   # AUC is reported for these (health)
 
 # Q&A may only quote the owner's outward card: the topic is a card field, the answer one of its values.
 QUESTIONS = sorted(FIELDS)
@@ -233,17 +236,22 @@ MATCHERS = ['constrained', 'panel', 'hybrid']
 BASELINE = 'constrained'  # paired precision differences are taken against this matcher
 WITH_QA = {'panel', 'hybrid'}  # matchers whose counterparts also see gated Q&A
 BINS = 10
+BOOTSTRAP = 10000
+WEIGHTS = [1.0, 0.5, 0.25, 0.125, 0.0625, 0.03125, 0.0]  # candidate likelihood weights for v2.1 probabilities
 SOURCES = ['exchange/match_sim.py', 'exchange/matchmaking.py', 'exchange/common.py', 'exchange/benchmark.py', 'EXPERIMENT_PROTOCOL.md']
 CANARY = re.compile(r'MRN-\d{4}-[A-Z]{2}|\d{1,3} [A-Z][a-z]+(?: [A-Z][a-z]+)? Lane|£\d{2,3},\d{3}')
 
 
 def plan():
-    return {'schema_version': 'leo.match-sim.v2', 'population': N, 'k': K, 'threshold': THRESHOLD,
+    return {'schema_version': 'leo.match-sim.v2.1', 'population': N, 'k': K, 'threshold': THRESHOLD,
             'development_seeds': DEV_SEEDS, 'heldout_seeds': HELDOUT_SEEDS, 'matchers': MATCHERS, 'baseline': BASELINE,
             'calibration_bins': BINS, 'questions_max': MAX_QUESTIONS, 'careless_rate': CARELESS_RATE, 'consent': CONSENT,
             'protected': list(PROTECTED), 'shareable': list(SHAREABLE),
             'adversary': 'naive Bayes, per-attribute fallback to the development prior when it does not beat it on seed 2',
             'analysis': 'per-seed means; normal 95% intervals across held-out seeds; paired differences vs constrained',
+            'v2_1': {'precision_differences': 'paired bootstrap over held-out seeds, all matcher pairs', 'bootstrap_replicates': BOOTSTRAP,
+                     'weak_signal': 'log-loss gain over smoothed development prior (nats), AUC for binary targets; bootstrap CIs',
+                     'likelihood_weights': WEIGHTS},
             'source': {f: digest((ROOT / f).read_bytes()) for f in SOURCES}}
 
 
@@ -270,12 +278,17 @@ class Adversary:
                 counts[values[attr]].update(toks)
                 vocab.update(toks)
             self.model[attr] = (prior, counts, len(vocab))
+        self.weight = {a: 1.0 for a in TARGETS}
         if validation:
             for attr in TARGETS:
                 majority = self.majority(attr)
                 nb = sum(self._nb(attr, t) == v[attr] for t, v in validation)
                 if nb <= sum(majority == v[attr] for _, v in validation):
                     self.prior_only.add(attr)
+                # v2.1: likelihood weight (0 = prior only) chosen by validation log-loss, so the
+                # probabilities are calibrated towards the prior when features are mostly noise.
+                loss = lambda w: sum(-math.log(self.proba(attr, t, w)[v[attr]]) for t, v in validation)
+                self.weight[attr] = min(WEIGHTS, key=lambda w: (loss(w), -w))
 
     def majority(self, attr):
         prior = self.model[attr][0]
@@ -288,6 +301,24 @@ class Adversary:
             size = sum(counts[c].values())
             return math.log(prior[c] / total) + sum(math.log((counts[c][t] + 1) / (size + v)) for t in toks)
         return max(sorted(prior), key=score)
+
+    def prior(self, attr):
+        """Development value frequencies, Laplace-smoothed over every possible value."""
+        counts = self.model[attr][0]
+        total = sum(counts.values()) + len(VALUES[attr])
+        return {c: (counts[c] + 1) / total for c in VALUES[attr]}
+
+    def proba(self, attr, toks, weight=None):
+        """P(value | view): smoothed prior times the naive Bayes likelihood raised to `weight`."""
+        weight = self.weight[attr] if weight is None else weight
+        _, counts, v = self.model[attr]
+        log = {}
+        for c, prior in self.prior(attr).items():
+            size = sum(counts[c].values())
+            log[c] = math.log(prior) + weight * sum(math.log((counts[c][t] + 1) / (size + v)) for t in toks)
+        top = max(log.values())
+        z = sum(math.exp(x - top) for x in log.values())
+        return {c: math.exp(x - top) / z for c, x in log.items()}
 
     def guess(self, toks):
         return {a: self.majority(a) if a in self.prior_only else self._nb(a, toks) for a in TARGETS}
@@ -321,9 +352,26 @@ def adversary(provider_cls, with_qa):
             return out
         selected = Adversary(examples(DEV_SEEDS[:-1]), examples(DEV_SEEDS[-1:]))
         final = Adversary(examples(DEV_SEEDS))
-        final.prior_only = selected.prior_only
+        final.prior_only, final.weight = selected.prior_only, selected.weight
         _ADVERSARIES[key] = final
     return _ADVERSARIES[key]
+
+
+def auc(scores, positives):
+    """Probability a random positive scores above a random negative (ties count half)."""
+    pos = [s for s, y in zip(scores, positives) if y]
+    neg = [s for s, y in zip(scores, positives) if not y]
+    if not pos or not neg:
+        return None
+    return sum((a > b) + 0.5 * (a == b) for a in pos for b in neg) / (len(pos) * len(neg))
+
+
+def bootstrap(values, key):
+    """Percentile 95% interval: resample held-out seeds with replacement (fixed random seed)."""
+    r = rng('bootstrap', key)
+    means = sorted(statistics.mean(r.choice(values) for _ in values) for _ in range(BOOTSTRAP))
+    return {'mean': statistics.mean(values), 'lower': means[int(0.025 * BOOTSTRAP)], 'upper': means[int(0.975 * BOOTSTRAP) - 1],
+            'method': f'paired bootstrap over seeds, {BOOTSTRAP} replicates'}
 
 
 def top_k(scores, people_ids, k):
@@ -415,8 +463,19 @@ def run_seed(seed, provider=None, n=N):
     truth = [targets(p) for p in people]
     for m in MATCHERS:
         attacker = adversary(cls, m in WITH_QA)
-        guesses = [attacker.guess(v) for v in counterpart_views(cls(), people, outward, m in WITH_QA)]
-        metrics[m]['inference'] = {}
+        views = counterpart_views(cls(), people, outward, m in WITH_QA)
+        guesses = [attacker.guess(v) for v in views]
+        metrics[m]['inference'], metrics[m]['weak_signal'] = {}, {}
+        for attr in TARGETS:
+            prior = attacker.prior(attr)
+            probs = [attacker.proba(attr, v) for v in views]
+            base_loss = statistics.mean(-math.log(prior[t[attr]]) for t in truth)
+            model_loss = statistics.mean(-math.log(q[t[attr]]) for q, t in zip(probs, truth))
+            weak = {'logloss_gain': base_loss - model_loss, 'weight': attacker.weight[attr]}
+            if attr in BINARY:
+                positive = VALUES[attr][1]
+                weak['auc'] = auc([q[positive] for q in probs], [t[attr] == positive for t in truth])
+            metrics[m]['weak_signal'][attr] = weak
         for attr in TARGETS:
             # Base rate: accuracy of the prior-only attacker (always the most common development value).
             base = sum(t[attr] == attacker.majority(attr) for t in truth) / n
@@ -451,8 +510,16 @@ def analyse(seeds):
         row['inference'] = {a: interval([x['inference'][a]['advantage'] for x in per]) for a in TARGETS}
         row['inference_protected_mean'] = interval([x['inference_protected_mean'] for x in per])
         rows[m] = row
+    differences = {}
+    for i, a in enumerate(MATCHERS):
+        for b in MATCHERS[i + 1:]:
+            values = [s['metrics'][b]['precision_at_k'] - s['metrics'][a]['precision_at_k'] for s in seeds]
+            differences[f'{b} - {a}'] = bootstrap(values, ['precision', a, b])
+    weak = {m: {a: {k: bootstrap([s['metrics'][m]['weak_signal'][a][k] for s in seeds], [m, a, k])
+                    for k in ('logloss_gain', 'auc') if k in seeds[0]['metrics'][m]['weak_signal'][a]}
+                | {'weight': seeds[0]['metrics'][m]['weak_signal'][a]['weight']} for a in TARGETS} for m in MATCHERS}
     bins = [[sum(s['calibration'][i][j] for s in seeds) for j in range(3)] for i in range(BINS)]
-    return {'matchers': rows, 'calibration_scope': seeds[0]['calibration_scope'],
+    return {'matchers': rows, 'precision_differences': differences, 'weak_signal': weak, 'calibration_scope': seeds[0]['calibration_scope'],
             'calibration': [{'bin': [i / BINS, (i + 1) / BINS], 'pairs': c, 'mean_p': sp / c if c else None, 'label_rate': y / c if c else None}
                             for i, (c, sp, y) in enumerate(bins)],
             'gate': {k: sum(s['gate'][k] for s in seeds) for k in ('answered', 'declined', 'blocked')},
@@ -511,7 +578,7 @@ def ci(v, digits=3):
 def table(result, label):
     seeds = result['seeds']
     gate = result['gate']
-    lines = [f'match-sim v2  plan {label}  seeds {seeds[0]}-{seeds[-1]} ({len(seeds)} x {N} fictional developers, {N * (N - 1) // 2} pairs each)  k={K}  threshold={THRESHOLD}',
+    lines = [f'match-sim v2.1  plan {label}  seeds {seeds[0]}-{seeds[-1]} ({len(seeds)} x {N} fictional developers, {N * (N - 1) // 2} pairs each)  k={K}  threshold={THRESHOLD}',
              f'hidden label rate {result["label_rate"]:.3f}; 95% normal intervals across seeds; fixture agents, cost $0',
              '',
              f'{"matcher":<12} {"proposals/seed":<15} {"precision@k":<22} {"recall@k":<22} {"prec - " + BASELINE:<22} {"violations/seed":<16} {"direct leak":<12} calls/proposal']
@@ -526,6 +593,18 @@ def table(result, label):
     lines.append(row('PROTECTED (mean)', None))
     lines += ['', 'shareable attributes: expected, consented (employer and school are optional card fields; city sets the timezone)', header]
     lines += [row(a, a) for a in SHAREABLE]
+    lines += ['', 'v2.1 (a) precision@k differences, paired bootstrap 95% CI over seeds',
+              f'{"comparison":<24} difference']
+    lines += [f'{name:<24} {ci(v)}' for name, v in result['precision_differences'].items()]
+    lines += ['', 'v2.1 (b) weak-signal leakage: log-loss gain over the base rate in nats (0 = none), AUC for binary; bootstrap 95% CI',
+              f'{"attribute":<24} {"measure":<10} ' + ' '.join(f'{m:<24}' for m in MATCHERS)]
+    for attr in TARGETS:
+        for k in ('logloss_gain', 'auc'):
+            if k in result['weak_signal'][MATCHERS[0]][attr]:
+                tag = f'{attr} *' if attr in SHAREABLE else attr
+                lines.append(f'{tag if k == "logloss_gain" else "":<24} {"log-loss" if k == "logloss_gain" else "AUC":<10} '
+                             + ' '.join(f'{ci(result["weak_signal"][m][attr][k]):<24}' for m in MATCHERS))
+    lines.append('* shareable with consent: guessability expected')
     lines += ['', f'calibration ({result["calibration_scope"]}, pooled; constrained gives no probability)',
               f'{"p bin":<12} {"pairs":>8} {"mean p":>8} {"label rate":>11}']
     for b in result['calibration']:

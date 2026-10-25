@@ -161,6 +161,25 @@ def test_inference_measure_detects_a_planted_protected_leak(monkeypatch):
     clean = ms.run_seed(5, n=80)['metrics']['constrained']['inference']
     assert leaky['health']['advantage'] > 0.15
     assert abs(clean['health']['advantage']) < 0.1
+    weak = ms.run_seed(5, LeakyHealth(), n=80)['metrics']['constrained']['weak_signal']['health']
+    assert weak['logloss_gain'] > 0.2 and weak['auc'] > 0.9   # v2.1 measures see it too
+
+
+def test_weak_signal_measure_detects_the_daytime_availability_hint():
+    # The generator links illness to weekday-daytime availability; accuracy cannot see it, v2.1 should.
+    weak = ms.run_seed(5)['metrics']['constrained']['weak_signal']
+    assert weak['health']['auc'] > 0.6 and 0 < weak['health']['logloss_gain'] < 0.2
+    assert all(abs(weak[a]['logloss_gain']) < 0.02 for a in ('sexuality', 'religion', 'politics', 'ethnicity', 'address'))
+
+
+def test_auc_and_bootstrap_helpers():
+    assert ms.auc([0.9, 0.8, 0.1, 0.2], [True, True, False, False]) == 1.0
+    assert ms.auc([0.5, 0.5], [True, False]) == 0.5
+    assert ms.auc([0.5], [True]) is None
+    first = ms.bootstrap([0.1, 0.2, 0.3, 0.4], 'k')
+    assert first == ms.bootstrap([0.1, 0.2, 0.3, 0.4], 'k')       # fixed random seed
+    assert first['lower'] <= first['mean'] <= first['upper']
+    assert ms.bootstrap([0.2] * 5, 'k')['lower'] == ms.bootstrap([0.2] * 5, 'k')['upper'] == 0.2
 
 
 def test_direct_leakage_detector_catches_a_leaky_owner_agent():
@@ -181,7 +200,9 @@ def test_campaign_freezes_plan_and_rejects_tampering(tmp_path, monkeypatch):
     first, plan_digest = ms.campaign()
     assert first['disk_scan_leaks'] == 0 and first['seeds'] == [1000, 1001]
     assert ms.campaign()[0] == first  # reuses immutable seed records
-    assert 'precision@k' in ms.table(first, plan_digest[:16])
+    text = ms.table(first, plan_digest[:16])
+    assert 'precision@k' in text and 'v2.1 (a)' in text and 'v2.1 (b)' in text
+    assert set(first['precision_differences']) == {'panel - constrained', 'hybrid - constrained', 'hybrid - panel'}
     folder = tmp_path / 'experiments' / ('match-sim-' + plan_digest[:16])
     record = folder / 'seeds' / '1000.json'
     value = json.loads(record.read_text())
