@@ -310,3 +310,92 @@ which coarsening does not change. At L3, availability questions are declined ins
   +0.027 precision@5 over L3; that would be a new protocol, not a reading of this one.
 - The A2A `match` service still scores whatever profiles a caller sends, availability included;
   the default applies where profiles are stored (`DisclosureStore`).
+
+# Match simulation v4: private overlap (final run)
+
+Plan `f243325f5b1b2d94`, frozen in `EXPERIMENT_PROTOCOL.md` ("match-sim v4: private overlap")
+before this run. Same held-out seeds 1000–1009. The v3 table reproduces exactly.
+
+In v4, cards carry no availability (as at L3). For each pair that already passes the card
+constraints, the owners' agents answer one yes/no question, "do our availabilities overlap?",
+from their private fields, and a "no" drops the pair. That was 1,810 questions per seed out of
+19,900 pairs.
+
+The attacker sees everything the matcher sees, including every yes/no answer (the same per-pair
+budget). It is fitted by nested 5-fold cross-validation on each seed. This is a different and
+stronger attacker than in v3, so its L0 and L3 health numbers differ from the v3 table. Intervals
+are seed bootstrap 95% CIs (10,000 replicates).
+
+## v4 results
+
+| Matcher | Condition | Health log-loss gain | Health AUC | Precision@5 | vs L0 | Proposals/seed |
+|---|---|---|---|---|---|---|
+| constrained | L0 exact | **+0.060 [0.044, 0.076]** | **0.693 [0.666, 0.721]** | 0.394 [0.380, 0.407] | — | 785 |
+| constrained | L3 removed | −0.009 [−0.015, −0.003] | 0.463 [0.431, 0.499] | 0.268 [0.257, 0.277] | −0.126 [−0.143, −0.111] | 1,810 |
+| constrained | v4 private overlap | +0.002 [−0.014, 0.018] | **0.559 [0.504, 0.607]** | 0.395 [0.382, 0.407] | +0.001 [−0.003, 0.003] | 785 |
+| hybrid | L0 exact | **+0.057 [0.039, 0.075]** | **0.690 [0.660, 0.719]** | 0.418 [0.402, 0.431] | — | 785 |
+| hybrid | L3 removed | −0.010 [−0.015, −0.006] | 0.452 [0.415, 0.488] | 0.313 [0.301, 0.324] | −0.105 [−0.121, −0.091] | 1,810 |
+| hybrid | v4 private overlap | +0.001 [−0.010, 0.012] | **0.555 [0.5003, 0.604]** | 0.418 [0.403, 0.432] | 0.000 [0.000, 0.000] | 785 |
+
+Bold: an interval that excludes no-signal on the leaking side. All rows: 0 constraint violations
+and 0 canaries in any output or on disk.
+
+Secondary measure, not in the rule: a lying counterpart sets its own private availability to
+weekday-daytime and asks each person once. It gets health log-loss gain **+0.065 [0.048, 0.081]**
+and AUC **0.657 [0.632, 0.681]**.
+
+## Decision
+
+**Default: L3 stays (no availability).** The pre-registered rule, on hybrid:
+
+- Precision: v4 recovers 100% of the L3 loss (needed 50%). With the yes/no answer, hybrid ranks
+  exactly as it does with exact availability, because both give the same constraint and the same
+  Timing signal.
+- Privacy: the health AUC interval must include 0.5. Its lower end is 0.5003, so v4 fails by
+  0.0003.
+
+The miss is marginal, and the log-loss gain interval does include 0. On the rule alone, v4 would be
+a coin flip, and a rerun with another seed set could pass it. Two things make L3 the right default
+anyway:
+
+- The passive attacker still finds health signal in v4 (AUC 0.555; above 0.6 on 4 of 10 seeds).
+  It infers someone's availability from how often their overlap answers are yes, and from how
+  often their yes-partners say yes. Daytime people overlap with more people.
+- The secondary probe is a stronger attack the rule did not cover. Anyone can lie about their own
+  private availability, and one question then reveals whether the other person is free on weekday
+  daytimes. That leaks health as much as showing exact availability (AUC 0.657 vs 0.690 at L0).
+  As designed, v4 does not protect against a dishonest counterpart.
+
+Applied: `AVAILABILITY_DEFAULT` stays `'none'` in `exchange/matchmaking.py`, now with a comment
+recording the v4 result. `propose(..., private_overlap=...)` stays available, but stored profiles do
+not use it. The edit changed a source digest; the rerun under plan `d1f19e67bf4c33e9` reproduces
+every number.
+
+## What the four runs say
+
+| Option | Health signal | Hybrid precision@5 |
+|---|---|---|
+| Exact availability on the card (L0) | yes, AUC ≈ 0.65–0.69 | 0.418 |
+| Coarser availability (L1, L2) | smaller, still detectable | 0.327–0.340 |
+| No availability (L3, default) | none detected | 0.313 |
+| Private yes/no overlap (v4) | borderline (honest attacker); full (lying prober) | 0.418 |
+
+In this simulation, matching precision depends on availability, and every way of using
+availability leaks some of the health signal it carries. The only option with no detectable
+leakage is not using availability at all, at a cost of about 10 points of precision@5.
+
+## Caveats
+
+- Fixture agents and an invented population. The health-to-availability link and the weight the
+  hidden model puts on availability are made up, so the size of both the leak and the cost is
+  illustrative. Real data could differ in either direction.
+- The cross-validated attacker trains on 160 people per fold and picks among many feature
+  families. Its own selection noise is part of every number: L3's AUC sits below 0.5 for that
+  reason, not because of any signal.
+- Seed bootstrap intervals cover seed-to-seed variation, not attacker-training variation, so they
+  are probably too narrow. The 0.5003 edge should be read as inconclusive rather than as a clear
+  leak. The decision still follows the pre-registered rule.
+- The lying-prober check uses one fixed probe (weekday-daytime). Defences, such as requiring
+  matched cards before a question, rate limits, or only answering for mutually approved pairs,
+  were not tested.
+- This is the final simulation run. Anything further belongs with real (consenting) data in Phase B.

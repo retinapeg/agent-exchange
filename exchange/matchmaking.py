@@ -22,6 +22,9 @@ PURPOSE = 'developer-introduction'
 AVAILABILITY_LEVELS = ('exact', 'day-part', 'week-part', 'none')
 # Chosen by the pre-registered match-sim v3 rule (MATCHMAKING_REPORT.md): no coarser level removed
 # the health signal, so stored profiles do not share availability. The simulation passes levels explicitly.
+# match-sim v4 (private yes/no overlap via propose(private_overlap=...)) recovered all the precision
+# but did not meet its pre-registered privacy condition (hybrid health AUC CI 0.5003-0.604), so it is
+# not the default; stored profiles keep no availability.
 AVAILABILITY_DEFAULT = 'none'
 DAY_PARTS = {'morning': ('morning', 'daytime'), 'afternoon': ('afternoon', 'daytime'), 'evening': ('evening', 'night')}
 
