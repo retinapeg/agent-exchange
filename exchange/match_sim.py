@@ -319,14 +319,14 @@ def run_seed(seed, provider=None, n=N):
         result = panel({'profiles': [a, b], 'qa': qa}, provider, THRESHOLD)
         pair = tuple(sorted([a['id'], b['id']]))
         all_p[pair] = result['p']
-        crossed.append(qa)
+        crossed.append({'qa': qa, 'reasons': result['reasons'], 'dissent': result['dissent']})
         if result['introduce']:
             panel_scores[pair] = result['p']
             panel_out.append({'participants': list(pair), 'p': result['p'], 'qa': qa, 'reasons': result['reasons'], 'dissent': result['dissent']})
     scores['panel'], outputs['panel'], calls['panel'] = panel_scores, panel_out, profile_calls + provider.calls - before
     # Everything that left an owner agent: outward profiles, each matcher's output, and for the
-    # panel every gated Q&A answer (introduced or not). Canaries are searched for in all of it.
-    crossed_text = {'tag-overlap': '', 'constrained': '', 'panel': json.dumps(crossed)}
+    # panel every gated Q&A answer and every reason/dissent (introduced or not). Canaries are searched for in all of it.
+    crossed_text = {'tag-overlap': '', 'constrained': '', 'panel': json.dumps(crossed, ensure_ascii=False)}
 
     positives = Counter()
     for (a, b), y in labels.items():
@@ -339,7 +339,8 @@ def run_seed(seed, provider=None, n=N):
         prec = [sum(labels[tuple(sorted([i, o]))] for o in r) / len(r) for i, r in ranked.items() if r]
         rec = [sum(labels[tuple(sorted([i, o]))] for o in r) / positives[i] for i, r in ranked.items() if positives[i]]
         proposed = list(scores[m])
-        text = json.dumps(outputs[m]) + json.dumps(outward) + crossed_text[m]
+        # ensure_ascii=False keeps '£' literal so the salary canary pattern can match.
+        text = json.dumps(outputs[m], ensure_ascii=False) + json.dumps(outward, ensure_ascii=False) + crossed_text[m]
         found = set(CANARY.findall(text))
         canaries = {v for p in people for v in p['canaries'].values()}
         metrics[m] = {'proposals': len(proposed), 'precision_at_k': statistics.mean(prec) if prec else 0.0,

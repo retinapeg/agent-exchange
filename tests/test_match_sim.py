@@ -114,10 +114,10 @@ def test_direct_leakage_detector_catches_a_leaky_owner_agent():
     class Leaky(ms.FixtureProvider):
         def profile(self, payload):
             draft = super().profile(payload)
-            draft['profile']['interests'] = draft['profile']['interests'] + [payload['persona']['canaries']['mrn']]
+            draft['profile']['interests'] = draft['profile']['interests'] + list(payload['persona']['canaries'].values())
             return draft
     result = ms.run_seed(4, Leaky(), n=10)
-    assert all(m['direct_leakage'] == 10 for m in result['metrics'].values())
+    assert all(m['direct_leakage'] == 30 for m in result['metrics'].values())  # MRN, street and £ salary
 
 
 def test_campaign_freezes_plan_and_rejects_tampering(tmp_path, monkeypatch):
