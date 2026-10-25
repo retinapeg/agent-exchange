@@ -25,6 +25,9 @@ def rel(path):
     return str(path.relative_to(ROOT)) if path else 'not recorded'
 
 
+MATCH_SIM_MARK = '<!-- match-sim:'
+
+
 def put(name, text):
     (ROOT/name).write_text(text.strip()+'\n')
 
@@ -373,10 +376,13 @@ asset, payee, integer amount cap and operation ID. General DNS endpoints are not
 No testnet operation, funded-wallet access or real service payment occurred in this assignment.
 Actual service expenditure: **0**. Model subscription/account charges remain unknown.
 ''')
+    # Keep the hand-written match-simulation sections below the marker.
+    existing = (ROOT/'MATCHMAKING_REPORT.md').read_text() if (ROOT/'MATCHMAKING_REPORT.md').exists() else ''
+    kept = '\n\n'+existing[existing.index(MATCH_SIM_MARK):] if MATCH_SIM_MARK in existing else ''
     put('MATCHMAKING_REPORT.md', '# Synthetic introduction evaluation\n\n'+match['scope']+'.\n\n'+
         '| Policy | Proposals | Invented mutual acceptances | Constraint violations | Withheld-field leakage |\n|---|---:|---:|---:|---:|\n'+
         '\n'.join(f"| {k} | {v['proposed']} | {v['simulated_mutual_acceptance']} | {v['constraint_violations']} | {v['withheld_field_leakage']} |" for k,v in match['results'].items())+
-        '\n\nRaw profiles, predeclared labels and metrics: `local_data/receipts/match-evaluation.json`. Per-field preview, purpose checks, owner-token bilateral consent and revocation are tested separately. These invented labels are not real consent, romantic compatibility or real-user outcomes.')
+        '\n\nRaw profiles, predeclared labels and metrics: `local_data/receipts/match-evaluation.json`. Per-field preview, purpose checks, owner-token bilateral consent and revocation are tested separately. These invented labels are not real consent, romantic compatibility or real-user outcomes.'+kept)
     put('MORNING_REPORT.md', morning(summary, test.parent, folder, pilots))
     location = receipt('implementation-report',summary,[str(folder.relative_to(ROOT)),rel(test),rel(browser),rel(browser_live),rel(mcp),rel(restart),rel(crash),'local_data/showcases/v1-live'],
         ['Public testnet not executed','Real cross-project endpoints not configured','Shared OS account; not production isolation'])
