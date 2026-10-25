@@ -155,7 +155,7 @@ because editing it would change the plan hash.
 ## Caveats
 
 - The panel lost v1's commitment answers (Q&A now only quotes the card), so its edge over
-  constrained shrank from +0.16 to +0.01. Commitment still drives the hidden labels.
+  constrained in precision@5 shrank from +0.10 (v1) to +0.01. Commitment still drives the hidden labels.
 - Links between protected attributes and employer, school or city are not modelled, so that
   route for inference is untested.
 - Invented population and compatibility model, fixture agents; not real-user outcomes. No live
