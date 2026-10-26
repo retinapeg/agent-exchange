@@ -41,7 +41,7 @@ def check(name="tests", paths=()):
         base = random.SystemRandom().randrange(20000, 55000)
         reserved = []
         try:
-            for port in range(base, base + 7):
+            for port in range(base, base + 10):
                 sock = socket.socket()
                 reserved.append(sock)
                 sock.bind(("127.0.0.1", port))

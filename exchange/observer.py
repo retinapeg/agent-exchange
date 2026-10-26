@@ -15,7 +15,9 @@ from exchange.integration import ObserverAdapter
 
 def make_observer(c):
     peer = c["peers"]["observer"]
-    app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
+    from exchange.lab import Lab, routes as lab_routes
+    lab = Lab(c)
+    app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None, lifespan=lab.lifespan)
     client = PeerClient(c, "observer")
     operator_client = PeerClient(c, 'operator')
     adapter = ObserverAdapter(DATA / 'observer/integration.sqlite')
@@ -77,6 +79,16 @@ def make_observer(c):
     @app.get("/style.css")
     async def style():
         return FileResponse(Path(__file__).parent / "static" / "style.css")
+
+    @app.get("/lab.js")
+    async def lab_script():
+        return FileResponse(Path(__file__).parent / "static" / "lab.js")
+
+    @app.get("/lab.css")
+    async def lab_style():
+        return FileResponse(Path(__file__).parent / "static" / "lab.css")
+
+    lab_routes(app, lab, authenticated)
 
     @app.post("/session")
     async def login(request: Request):
@@ -162,5 +174,6 @@ def make_observer(c):
                 "permissions": [{"capability": "public testnet", "state": "requires explicit operator configuration"}, {"capability": "real cross-project adapters", "state": "endpoints not authorised"}]}
     # Session-authenticated actions are public to the bearer guard only; each
     # route still checks the HttpOnly operator session and same-origin Host/Origin.
-    return Guard(app, peer, public=["/", "/app.js", "/style.css", "/session", "/snapshot", "/logout",'/submit'],
-                 public_prefixes=('/approvals/','/runs/'),store=adapter)
+    # Lab routes check the operator session (or operator bearer) themselves; polling reads are not logged.
+    return Guard(app, peer, public=["/", "/app.js", "/style.css", "/lab.js", "/lab.css", "/session", "/snapshot", "/logout",'/submit'],
+                 public_prefixes=('/approvals/','/runs/','/lab/'),store=adapter,quiet_prefixes=('/lab/',))

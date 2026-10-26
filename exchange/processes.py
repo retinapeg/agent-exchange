@@ -44,6 +44,8 @@ def status():
 def start():
     DATA.mkdir(exist_ok=True)
     init_config()
+    from exchange.lab_config import ensure_lab_config
+    ensure_lab_config()
     current = status()
     if current["manager_alive"]:
         return current
@@ -163,6 +165,9 @@ def serve(name, owner):
     elif name == "observer":
         from exchange.observer import make_observer
         app = make_observer(c)
+    elif peer.get("lab_agent"):
+        from exchange.lab_agent import make_lab_agent
+        app = make_lab_agent(c, name)
     else:
         from exchange.ledger import make_ledger
         app = make_ledger(c)

@@ -1,11 +1,50 @@
 <!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Agent Exchange · Local observatory</title><link rel="stylesheet" href="/style.css"><script src="/app.js" defer></script></head>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Agent Exchange · Local observatory</title><link rel="stylesheet" href="/style.css"><link rel="stylesheet" href="/lab.css"><script src="/app.js" defer></script><script src="/lab.js" defer></script></head>
 <body><header><a class="brand" href="/">AE<span>Agent Exchange</span></a><span class="boundary">LOCAL DEVELOPMENT</span><span id="connection" role="status">Locked</span></header>
 <main><section class="intro"><p class="eyebrow">DISCOVER → DELEGATE → VERIFY</p><h1>See what the agents actually did.</h1><p>Local collaboration, traceable artifacts and optional simulated credits.</p></section>
 <section id="login" class="panel"><h2>Open the observatory</h2><p>Enter this project's observer operator token from <code>local_data/config.json</code>. It stays in this browser session.</p><form id="login-form"><label for="token">Operator token</label><div class="row"><input id="token" type="password" autocomplete="off" required><button>Connect</button></div><p id="login-error" role="alert"></p></form></section>
 <div id="workspace" hidden><div class="toolbar"><p id="updated" aria-live="polite"></p><button id="refresh">Refresh now</button><button id="logout" class="quiet">Lock</button></div>
 <section id="metrics" class="metrics" aria-label="Recent activity"></section>
-<nav aria-label="Observatory sections"><a href="#compose">New task</a><a href="#agents">Agents</a><a href="#runs">Tasks & artifacts</a><a href="#approvals">Approvals</a><a href="#payments">Payments</a><a href="#timeline">Timeline</a></nav>
+<nav aria-label="Observatory sections"><a href="#lab">Agent lab</a><a href="#compose">New task</a><a href="#agents">Agents</a><a href="#runs">Tasks & artifacts</a><a href="#approvals">Approvals</a><a href="#payments">Payments</a><a href="#timeline">Timeline</a></nav>
+<section id="lab" class="panel lab" aria-labelledby="lab-title">
+<div class="lab-head"><div><p class="eyebrow">RENDEZVOUS LAB · THREE INDEPENDENT AGENTS · A2A OVER LOCAL HTTP</p><h2 id="lab-title">Agent rendezvous</h2>
+<p id="lab-task" class="muted">Three agents, each with a private homebase memory, must pool what they know to compute a component's steady-state temperature.</p></div>
+<div class="lab-badges" aria-label="Data source"><span id="lab-source" class="source-badge idle">IDLE</span><span id="lab-brain-badge" class="source-badge quietbadge" hidden></span><span id="lab-inputs-badge" class="source-badge quietbadge" hidden>SIMULATED INPUTS</span><span id="lab-status" class="lab-status">No run selected</span></div></div>
+<div class="lab-controls">
+<label>Run<select id="lab-run"><option value="">New run…</option></select></label>
+<label>Condition<select id="lab-mode"><option value="communication">B · Communication enabled</option><option value="isolated">A · Isolated baseline</option><option value="intervention">C · Information intervention</option></select></label>
+<label>Agent brains<select id="lab-brain"><option value="claude">Live Claude CLI (real inference)</option><option value="fixture">Fixture (deterministic, no model)</option></select></label>
+<label>Trial inputs<select id="lab-trial"><option value="fixed">Fixed · 120 W · 21 °C · 0.18 K/W</option><option value="random">Fresh random inputs (new seed)</option><option value="match">Same inputs as the selected run</option></select></label>
+</div>
+<label id="lab-approval" class="lab-approval"><input id="lab-approve" type="checkbox"><span id="lab-approval-text">Loading limits…</span></label>
+<div class="lab-buttons" role="group" aria-label="Run controls">
+<button id="lab-start" type="button">Start</button><button id="lab-pause" type="button" class="quiet">Pause</button><button id="lab-step" type="button" class="quiet">Step</button><button id="lab-inject-open" type="button" class="quiet">Inject fact</button><button id="lab-resume" type="button" class="quiet">Resume</button><button id="lab-stop" type="button" class="quiet">Stop</button><button id="lab-replay" type="button" class="quiet">Replay</button>
+<label class="lab-speed">Replay speed<select id="lab-speed"><option value="1">1×</option><option value="2" selected>2×</option><option value="4">4×</option></select></label></div>
+<p id="lab-message" class="lab-message" role="status" aria-live="polite"></p>
+<form id="lab-inject" class="lab-inject" hidden><p class="notice">Operator intervention · allowed only while paused · the original fact and its revision history are kept</p>
+<div class="lab-inject-grid"><label>Agent<select id="inject-agent"><option value="physics">Agent A · Physics</option><option value="environment">Agent B · Environment</option><option value="mathematics">Agent C · Mathematics</option></select></label>
+<label>Fact key<input id="inject-key" value="heat_load" autocomplete="off" pattern="[a-z][a-z0-9_]{1,47}" required></label>
+<label>Value<input id="inject-value" value="150" autocomplete="off" required></label>
+<label>Unit<input id="inject-unit" value="W" autocomplete="off" maxlength="16"></label></div>
+<label for="inject-note">Note stored with the fact</label><input id="inject-note" class="wide" value="Operator revision: re-measured heat load." maxlength="300">
+<div class="row"><button id="inject-submit">Inject into this agent only</button><button id="inject-suggest" type="button" class="quiet">Use the trial's planned revision</button><button id="inject-cancel" type="button" class="quiet">Cancel</button></div></form>
+<div id="lab-meters" class="lab-meters" aria-label="Run budget"></div>
+<div class="lab-stage"><figure class="lab-network"><svg id="lab-svg" viewBox="0 0 720 470" role="img" aria-labelledby="lab-svg-title lab-svg-desc"><title id="lab-svg-title">Agent network</title><desc id="lab-svg-desc">Three agent homebases connected by A2A message lanes. Packets move only when a delivery is recorded.</desc></svg>
+<figcaption id="lab-caption">Packets are projections of recorded A2A deliveries (sender, recipient, content and timestamps from the delivery receipt). They never stand in for inference.</figcaption></figure>
+<section class="lab-transcript" aria-labelledby="lab-transcript-title"><div class="lab-subhead"><h3 id="lab-transcript-title">Conversation transcript</h3><span id="lab-transcript-count" class="muted"></span></div><ol id="lab-transcript"></ol></section></div>
+<div class="lab-subhead"><h3>Homebases and memories</h3><button id="lab-inspect" type="button" class="quiet small">Inspect stored records</button></div>
+<div id="lab-homebases" class="lab-homebases"></div>
+<details id="lab-records" class="lab-records" hidden><summary>Stored homebase records (read over HTTP from each agent)</summary><div id="lab-records-body"></div></details>
+<div class="lab-lower"><section class="lab-lineage" aria-labelledby="lab-lineage-title"><h3 id="lab-lineage-title">Data lineage</h3><div id="lab-lineage"><p class="muted">Select any fact in a homebase to trace where it came from.</p></div></section>
+<section class="lab-results" aria-labelledby="lab-results-title"><div class="lab-subhead"><h3 id="lab-results-title">Results beside the isolated baseline</h3><button id="lab-baseline" type="button" class="quiet small" hidden>Run isolated baseline on these inputs</button></div><div id="lab-results"><p class="muted">Results appear when a run completes. Runs with the same inputs are compared side by side.</p></div></section></div>
+<details class="lab-legend"><summary>What the labels mean</summary><dl>
+<dt>LIVE</dt><dd>Recorded now from real Claude CLI calls and real A2A HTTP deliveries.</dd>
+<dt>FIXTURE</dt><dd>Same services and HTTP, but each agent's decisions come from a deterministic stand-in policy. No model is called.</dd>
+<dt>REPLAY</dt><dd>Playback of a stored event log, with recorded gaps compressed. No new inference or messages.</dd>
+<dt>RECORDED</dt><dd>A finished run, shown from its stored events.</dd>
+<dt>SIMULATED INPUTS</dt><dd>The physical values are synthetic scenario data generated for the trial, not measurements.</dd>
+<dt>Knowledge states</dt><dd>✓ accepted · ↻ corrected (supersedes an earlier value) · ? uncertain · ✕ rejected · = already known · struck through: superseded (kept in history).</dd></dl></details>
+</section>
 <section id="compose" class="panel"><div class="section-title"><h2>Give the agents useful work</h2><span id="model-config"></span></div>
 <form id="task-form"><div class="form-grid">
 <label>Service<select id="task-service"><option value="requirements">Extract document requirements</option><option value="csv-audit">Audit CSV data</option></select></label>

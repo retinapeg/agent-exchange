@@ -1,0 +1,165 @@
+/* Rendezvous lab. Agent identity hues validated (dark, panel surface #141f2b, all pairs):
+   physics #3987e5 · environment #d95926 · mathematics #199e70. Status hues always ship with icon + label. */
+.lab{--a-physics:#3987e5;--a-environment:#d95926;--a-mathematics:#199e70;--st-good:#0ca30c;--st-warn:#fab219;--st-critical:#d03b3b;--well:#101a24;--deep:#0c1620}
+.lab button:disabled{opacity:.42;cursor:not-allowed}
+.lab button.small,.lab .small{padding:6px 11px;font-size:12px}
+.lab h3{font-size:15px;margin:0;letter-spacing:-.2px}
+.lab-head{display:flex;justify-content:space-between;gap:20px;align-items:flex-start;flex-wrap:wrap}
+.lab-head h2{font-size:24px;margin:4px 0 6px}
+.lab-head p{margin:0;max-width:680px}
+.lab-badges{display:flex;gap:8px;align-items:center;flex-wrap:wrap;justify-content:flex-end}
+.source-badge{font-size:11px;letter-spacing:1.4px;font-weight:800;border-radius:4px;padding:4px 9px;border:1px solid var(--line);color:var(--muted);white-space:nowrap}
+.source-badge.live{background:var(--st-critical);border-color:var(--st-critical);color:#fff}
+.source-badge.live::before{content:"";display:inline-block;width:7px;height:7px;border-radius:50%;background:#fff;margin-right:7px;vertical-align:1px;animation:onair 1.2s ease-in-out infinite}
+.source-badge.replay{border-color:#9085e9;color:#d5d0ff}
+.source-badge.fixture{border-color:var(--amber);color:var(--amber)}
+.source-badge.recorded{border-color:var(--muted);color:var(--text)}
+.source-badge.quietbadge{font-weight:600;letter-spacing:.8px}
+.lab-status{font-size:13px;color:var(--text);padding-left:4px}
+.lab-status.paused,.lab-status.pausing,.lab-status.stepping,.lab-status.interrupted{color:var(--amber)}
+.lab-status.failed{color:var(--bad)}
+.lab-controls{display:grid;grid-template-columns:minmax(0,1.6fr) repeat(3,minmax(0,1fr));gap:14px;margin-top:20px}
+.lab-approval{display:flex;gap:10px;align-items:flex-start;margin:14px 0 4px;font-size:12.5px;color:var(--text);background:var(--deep);border:1px dashed #4b6075;border-radius:8px;padding:10px 12px}
+.lab-approval input{margin-top:3px;accent-color:var(--accent)}
+.lab-buttons{display:flex;flex-wrap:wrap;gap:8px;align-items:flex-end;margin-top:12px}
+.lab-speed{display:flex;gap:8px;align-items:center;margin:0 0 0 auto}
+.lab-speed select{width:auto;margin:0;padding:7px}
+.lab-message{min-height:20px;margin:10px 0 0;font-size:13px;color:var(--text)}
+.lab-inject{background:var(--deep);border:1px solid #665334;border-radius:10px;padding:16px;margin:10px 0}
+.lab-inject .notice{margin-top:0}
+.lab-inject-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-bottom:12px}
+.lab-inject-grid input{display:block;width:100%;margin-top:5px}
+.lab-meters{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin:16px 0}
+.lab-meter{background:var(--well);border:1px solid var(--line);border-radius:8px;padding:11px 14px;min-width:0}
+.lab-meter b{display:block;font-size:22px;letter-spacing:-.5px;font-variant-numeric:tabular-nums}
+.lab-meter-label,.lab-meter small{font-size:12px;color:var(--muted)}
+.lab-bar{height:6px;background:#22313f;border-radius:4px;margin:7px 0 3px;overflow:hidden}
+.lab-bar span{display:block;height:100%;background:var(--accent);border-radius:4px;transition:width .3s}
+.lab-stage{display:grid;grid-template-columns:minmax(0,1.45fr) minmax(0,1fr);gap:16px;align-items:stretch}
+.lab-network{margin:0;background:radial-gradient(ellipse at 50% 45%,#13263a 0,#0d1722 70%);border:1px solid var(--line);border-radius:12px;padding:8px;display:flex;flex-direction:column;min-width:0}
+.lab-network svg{width:100%;height:auto;display:block;margin:auto 0}
+.lab-network figcaption{font-size:11.5px;color:var(--muted);padding:2px 10px 8px}
+.lab .lane{fill:none;stroke:#3a5068;stroke-width:1.5;stroke-dasharray:4 6}
+.lab .lane.active{stroke-dasharray:none;stroke-width:3}
+.lab .lane.active.from-physics{stroke:var(--a-physics)}.lab .lane.active.from-environment{stroke:var(--a-environment)}.lab .lane.active.from-mathematics{stroke:var(--a-mathematics)}
+.lab .node{cursor:pointer;outline:none}
+.lab .node:focus-visible .core{stroke:var(--amber);stroke-width:2}
+.lab .node .core{fill:#0f1c29}
+.lab .node .ring{fill:none;stroke-width:3}
+.lab .node .halo{fill:none;stroke-width:2.5;stroke-dasharray:6 10;opacity:0}
+.lab .agent-physics .ring,.lab .agent-physics .halo{stroke:var(--a-physics)}
+.lab .agent-environment .ring,.lab .agent-environment .halo{stroke:var(--a-environment)}
+.lab .agent-mathematics .ring,.lab .agent-mathematics .halo{stroke:var(--a-mathematics)}
+.lab .node.thinking .halo{opacity:1;animation:orbit 1.3s linear infinite}
+.lab .node.arrived .ring{animation:arrive .9s ease-out}
+.lab .node text{text-anchor:middle;font-family:system-ui,-apple-system,sans-serif}
+.lab .node .letter{fill:var(--text);font-size:34px;font-weight:800}
+.lab .node .role{fill:var(--text);font-size:13px;font-weight:650}
+.lab .node .facts{fill:var(--muted);font-size:11px}
+.lab .node .answer{fill:var(--text);font-size:14px;font-weight:750}
+.lab .node .answer.good{fill:#6ee06e}.lab .node .answer.bad{fill:var(--bad)}
+.lab .node .state{fill:var(--amber);font-size:11.5px}
+.lab .queued{stroke:#0c131b;stroke-width:2}
+.lab .queued.from-physics{fill:var(--a-physics)}.lab .queued.from-environment{fill:var(--a-environment)}.lab .queued.from-mathematics{fill:var(--a-mathematics)}
+.lab .badge{fill:var(--st-warn);stroke:#0c131b;stroke-width:2}
+.lab .badge-text{fill:#1d1606;font-size:12px;font-weight:800;text-anchor:middle}
+.lab .packet circle{stroke:#0c131b;stroke-width:2.5}
+.lab .packet.from-physics circle{fill:var(--a-physics)}.lab .packet.from-environment circle{fill:var(--a-environment)}.lab .packet.from-mathematics circle{fill:var(--a-mathematics)}
+.lab .packet-label{fill:var(--text);font-size:11px;font-weight:650;text-anchor:middle;paint-order:stroke;stroke:#0c131b;stroke-width:3px}
+.lab-transcript{background:var(--well);border:1px solid var(--line);border-radius:12px;padding:14px;display:flex;flex-direction:column;min-width:0;min-height:0}
+.lab-subhead{display:flex;justify-content:space-between;align-items:center;gap:12px;margin:18px 0 10px;flex-wrap:wrap}
+.lab-transcript .lab-subhead{margin-top:0}
+#lab-transcript{list-style:none;margin:0;padding:0;overflow:auto;max-height:540px;flex:1}
+.lab-line{display:grid;grid-template-columns:84px minmax(0,1fr);gap:10px;padding:9px 0 9px 8px;border-top:1px solid var(--line);font-size:12.5px;border-left:3px solid transparent}
+.lab-line time{color:var(--muted);font:11px/1.6 ui-monospace,monospace}
+.lab-line p{margin:0;color:var(--text)}
+.lab-line.agent-physics{border-left-color:var(--a-physics)}.lab-line.agent-environment{border-left-color:var(--a-environment)}.lab-line.agent-mathematics{border-left-color:var(--a-mathematics)}
+.lab-line.k-run p,.lab-line.k-seed p,.lab-line.k-think p{color:var(--muted)}
+.lab-line.k-pause p,.lab-line.k-inject p{color:var(--amber)}
+.lab-line.k-limit p,.lab-line.k-error p{color:var(--bad)}
+.lab-line.k-done p{color:var(--accent)}
+.lab-line-body{min-width:0;overflow-wrap:anywhere}
+.lab-msg-head{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.lab .dot{width:10px;height:10px;border-radius:50%;display:inline-block;flex:none}
+.lab .dot.from-physics{background:var(--a-physics)}.lab .dot.from-environment{background:var(--a-environment)}.lab .dot.from-mathematics{background:var(--a-mathematics)}
+.lab-intent{border:1px solid #4b6075;border-radius:4px;padding:0 6px;font-size:10.5px;text-transform:uppercase;letter-spacing:.7px;color:var(--text)}
+.lab-content{margin:4px 0!important;color:var(--text)}
+.lab-evidence{display:flex;flex-wrap:wrap;gap:4px;margin:3px 0}
+.lab-ev{font:11px/1.5 ui-monospace,monospace;background:var(--deep);border:1px solid #33506a;border-radius:4px;padding:0 6px;color:var(--text)}
+.lab-meta{display:block;color:var(--muted);font-size:11px;margin-top:3px}
+.lab-turn-head{font-weight:650}
+.lab-decision{display:flex;gap:6px;flex-wrap:wrap;align-items:baseline;margin:3px 0!important}
+.lab-decision small{color:var(--muted)}
+.lab-derived,.lab-queued,.lab-answer,.lab-note{margin:3px 0!important}
+.lab-derived{color:#bfe9ff!important}
+.lab-queued{color:var(--muted)!important}
+.lab-answer{font-weight:600}
+.lab-note{color:var(--muted)!important;font-style:italic}
+.lab-warn{color:var(--amber)!important}
+.lab-homebases{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+.lab-home{background:var(--well);border:1px solid var(--line);border-top:4px solid;border-radius:10px;padding:14px;min-width:0}
+.lab-home.agent-physics{border-top-color:var(--a-physics)}.lab-home.agent-environment{border-top-color:var(--a-environment)}.lab-home.agent-mathematics{border-top-color:var(--a-mathematics)}
+.lab-home.thinking{box-shadow:0 0 0 1px var(--amber) inset}
+.lab-home.flash{animation:homeflash 1.2s ease-out}
+.lab-home-head{display:flex;justify-content:space-between;gap:10px;align-items:flex-start;flex-wrap:wrap}
+.lab-home h4{margin:0;font-size:15px}
+.lab-home-meta{display:block}
+.lab-toggle{display:flex;gap:4px}
+.lab-toggle button[aria-pressed="true"]{background:var(--accent);color:#0b2119}
+.lab-facts{list-style:none;padding:0;margin:10px 0 0;display:grid;gap:3px}
+.lab-fact-btn{width:100%;background:transparent;color:var(--text);border:1px solid transparent;border-radius:6px;padding:6px 8px;display:grid;grid-template-columns:30px minmax(0,1fr);gap:2px 8px;text-align:left;font-weight:400;font-size:12.5px}
+.lab-fact-btn:hover{border-color:var(--line);background:#132232}
+.lab-fact-btn code{color:var(--muted);font-size:11.5px;padding-top:1px}
+.lab-fact-text{overflow-wrap:anywhere}
+.lab-fact.selected .lab-fact-btn{border-color:var(--amber)}
+.lab-fact.superseded .lab-fact-text{text-decoration:line-through;color:var(--muted)}
+.lab-tags{grid-column:2;display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+.lab-chip{font-size:10.5px;border-radius:999px;padding:0 8px;border:1px solid var(--line);color:var(--text);white-space:nowrap;line-height:1.7}
+.lab-chip.st-accepted{border-color:var(--st-good);background:rgba(12,163,12,.16)}
+.lab-chip.st-corrected{border-color:var(--accent);background:rgba(119,231,191,.14)}
+.lab-chip.st-uncertain{border-color:var(--st-warn);background:rgba(250,178,25,.14)}
+.lab-chip.st-rejected{border-color:var(--st-critical);background:rgba(208,59,59,.2)}
+.lab-chip.st-duplicate,.lab-chip.st-superseded{color:var(--muted)}
+.lab-origin{font-size:11px;color:var(--muted)}
+.lab-new{font-size:9.5px;letter-spacing:.9px;text-transform:uppercase;color:#0b2119;background:var(--accent);border-radius:4px;padding:0 6px;font-weight:800}
+.lab-pending{font-size:12px;color:var(--amber);margin:8px 0 0}
+.lab-outq{font-size:12px;color:var(--muted);margin:6px 0 0}
+.lab-answerbox{border-top:1px solid var(--line);margin-top:10px;padding-top:10px;display:grid;gap:3px}
+.lab-answerbox b{font-size:14px}
+.lab-verdict{font-size:12px;font-weight:700}
+.lab-verdict.good{color:#6ee06e}.lab-verdict.bad{color:var(--bad)}
+.lab-records{margin-top:12px;border:1px solid var(--line);border-radius:10px;padding:10px 14px}
+.lab-records details{border-top:1px solid var(--line)}
+.lab-lower{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.25fr);gap:16px;margin-top:6px}
+.lab-lineage,.lab-results{background:var(--well);border:1px solid var(--line);border-radius:12px;padding:14px;min-width:0;margin-top:14px}
+.lab-lineage h3,.lab-results h3{margin-bottom:10px}
+.lab-results .lab-subhead{margin:0 0 10px}
+.lab-chain{list-style:none;padding:0;margin:8px 0;display:grid;gap:8px}
+.lab-hop{border-left:3px solid var(--line);padding:6px 10px;background:var(--deep);border-radius:0 6px 6px 0;font-size:12.5px}
+.lab-hop.agent-physics{border-left-color:var(--a-physics)}.lab-hop.agent-environment{border-left-color:var(--a-environment)}.lab-hop.agent-mathematics{border-left-color:var(--a-mathematics)}
+.lab-hop.target{outline:1px solid var(--amber)}
+.lab-hop small{display:block;color:var(--muted);margin-top:2px;overflow-wrap:anywhere}
+.lab-table-wrap{overflow-x:auto}
+.lab-table{width:100%;border-collapse:collapse;font-size:12.5px}
+.lab-table th,.lab-table td{text-align:left;padding:7px 8px;border-bottom:1px solid var(--line);vertical-align:top}
+.lab-table th{font-weight:600;color:var(--text)}
+.lab-table tr:first-child th{color:var(--muted);font-weight:600}
+.lab-table td{font-variant-numeric:tabular-nums;color:var(--text)}
+.lab-table .current{background:rgba(119,231,191,.07)}
+.lab-table th small{display:block;font-weight:400;color:var(--muted)}
+.lab-table.compact{font-size:11.5px;margin:8px 0}
+.lab-prop{margin-top:12px;border-top:1px solid var(--line);padding-top:10px;font-size:12.5px}
+.lab-prop p{margin:4px 0;color:var(--text)}
+.lab-legend{margin-top:16px}
+.lab-legend dl{display:grid;grid-template-columns:150px 1fr;gap:6px 14px;font-size:12.5px;margin:10px 0 0}
+.lab-legend dt{font-weight:700;color:var(--text)}
+.lab-legend dd{margin:0;color:var(--muted)}
+@keyframes orbit{to{stroke-dashoffset:-64}}
+@keyframes arrive{0%{stroke-width:3}35%{stroke-width:11}100%{stroke-width:3}}
+@keyframes homeflash{0%{box-shadow:0 0 0 2px var(--amber)}100%{box-shadow:0 0 0 0 transparent}}
+@keyframes onair{50%{opacity:.25}}
+@media (prefers-reduced-motion:reduce){.lab .node.thinking .halo,.lab .node.arrived .ring,.lab-home.flash,.source-badge.live::before{animation:none}}
+@media (max-width:1100px){.lab-stage,.lab-lower{grid-template-columns:minmax(0,1fr)}.lab-homebases{grid-template-columns:minmax(0,1fr)}#lab-transcript{max-height:420px}}
+@media (max-width:760px){.lab-controls{grid-template-columns:repeat(2,minmax(0,1fr))}.lab-meters,.lab-inject-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+.lab-line{grid-template-columns:minmax(0,1fr);gap:2px}.lab-speed{margin-left:0}.lab-badges{justify-content:flex-start}.lab-legend dl{grid-template-columns:1fr}}
+@media (max-width:460px){.lab-controls{grid-template-columns:minmax(0,1fr)}.lab-buttons button{flex:1 1 30%}}

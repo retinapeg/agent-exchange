@@ -6,7 +6,7 @@ source. A completed task, a valid signature and a useful result are three differ
 
 Seven independently running local services communicate over actual HTTP: registry, buyer,
 requirements extractor, CSV auditor, verifier/introduction provider, observer and simulator
-ledger. The implementation uses the official A2A SDK, real SSE and a separate official MCP
+ledger. Three more processes host the rendezvous lab's agents (below). The implementation uses the official A2A SDK, real SSE and a separate official MCP
 stdio server for read-only discovery/status.
 
 ## Run
@@ -31,6 +31,24 @@ CSV audits use the deterministic provider. The buyer compares three requirement 
 For paid UI requests, review and approve the exact task and quote before any credits move.
 Do not publish the config or raw local receipts. The browser smoke test uses installed
 Chrome in an isolated repository-local profile; it does not use your normal browser profile.
+
+### Agent rendezvous lab
+
+Three Claude-backed agents (Physics :8717, Environment :8718, Mathematics :8719) run as separate processes. Each has
+its own SQLite homebase memory, inbox/outbox, A2A card and credentials, and every turn is one bounded `claude` CLI
+call. They exchange evidence over real A2A HTTP to compute a component's steady-state temperature.
+
+Open the **Agent lab** panel at the top of the dashboard. For a live run, tick the approval box (at most 12 calls and
+12 messages per run), then Start; Pause, Step, Inject fact, Resume, Stop and Replay control the run.
+
+Conditions:
+- **A:** isolated baseline.
+- **B:** communication.
+- **C:** intervention. It pauses at the end of round one so you can revise one agent's fact.
+
+From the terminal: `./exchange.sh lab --mode intervention --brain claude --approve-live`, or `--brain fixture`
+for no model calls. See [RENDEZVOUS_REPORT.md](RENDEZVOUS_REPORT.md) for launch details and results, and
+[RENDEZVOUS_PROTOCOL.md](RENDEZVOUS_PROTOCOL.md) for the frozen experiment protocol.
 
 Stop only project-owned processes:
 

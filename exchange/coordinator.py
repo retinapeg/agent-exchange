@@ -18,9 +18,9 @@ WAITING = {'approval-required', 'input-required', 'outcome-unknown', 'interrupte
 
 
 class Coordinator:
-    def __init__(self, config, directory):
+    def __init__(self, config, directory, *, client=None):
         self.c, self.directory = config, directory
-        self.client = PeerClient(config)
+        self.client = client if client is not None else PeerClient(config)
         self.store = Database(directory / 'buyer/buyer.sqlite')
         self.locks, self.workers = {}, {}
         self.slots = asyncio.Semaphore(4)
@@ -133,6 +133,8 @@ class Coordinator:
 
     def approval(self, run_id, checkpoint):
         preview={'run_id':run_id,'provider':checkpoint['provider'],'task':checkpoint['task'],'quote':checkpoint['quote']}
+        if checkpoint.get('limits'):
+            preview['limits'] = checkpoint['limits']
         binding=digest(preview)
         with self.store.tx() as db:
             row=db.execute('SELECT * FROM approvals WHERE run_id=?',(run_id,)).fetchone()
@@ -140,9 +142,10 @@ class Coordinator:
                 if row['binding']!=binding: raise ExchangeFailure('policy','Approval terms changed')
                 return dict(row)
             db.execute('INSERT INTO approvals VALUES(?,?,?,?,?,?,?)',(run_id,binding,canonical(preview).decode(),'pending',now(),None,None))
-            self.emit('approval.requested',run_id,{'capability':'simulator-payment','reason':'Review the exact task and quoted credits before admission',
+            self.emit('approval.requested',run_id,{'capability':'simulator-payment' if checkpoint['quote'] else 'deterministic-preparation',
+                'reason':'Review the exact task, provider and limits before execution',
                 'approval_id':run_id,'binding':binding,'preview':preview},db=db)
-        self.store.event('approval.requested','buyer','operator',trace_id=run_id,order_id=run_id,quote_id=checkpoint['quote']['quote_id'])
+        self.store.event('approval.requested','buyer','operator',trace_id=run_id,order_id=run_id,quote_id=(checkpoint['quote'] or {}).get('quote_id'))
         return {'state':'pending','binding':binding,'preview':canonical(preview).decode()}
 
     def schedule(self, run_id):
@@ -216,13 +219,13 @@ class Coordinator:
                         self.checkpoint(run_id,checkpoint)
                     task,provider,interpretation=checkpoint['task'],checkpoint['provider'],checkpoint['plan']
                     self.store.event('provider.selected','buyer',provider,trace_id=run_id,**checkpoint['decision'])
+                    if value.get('require_approval'):
+                        approval=self.approval(run_id,checkpoint)
+                        if approval['state']=='pending':
+                            return self.finish(run_id,{'run_id':run_id,'status':'approval-required','provider':provider,
+                                'approval':{'id':run_id,'binding':approval['binding'],'preview':json.loads(approval['preview'])},'decision':checkpoint['decision']})
+                        if approval['state']!='approved': raise ExchangeFailure('policy','Operator declined the task')
                     if value.get('payment_mode')=='simulator':
-                        if value.get('require_approval'):
-                            approval=self.approval(run_id,checkpoint)
-                            if approval['state']=='pending':
-                                return self.finish(run_id,{'run_id':run_id,'status':'approval-required','provider':provider,
-                                    'approval':{'id':run_id,'binding':approval['binding'],'preview':json.loads(approval['preview'])},'decision':checkpoint['decision']})
-                            if approval['state']!='approved': raise ExchangeFailure('policy','Operator declined the simulator payment')
                         if not checkpoint.get('payment'):
                             from exchange.commerce import paid_exchange
                             payment=await paid_exchange(self.client,self.store,self.c,provider,task,run_id,quote=checkpoint.get('quote'),dispatch=False)
@@ -283,6 +286,25 @@ class Coordinator:
                 self.emit(kind,run_id,{'provider':result['provider'],'task':result['task'],'verifier':result.get('verifier')},db=db)
         return result
 
+    def decide(self, run_id, value, principal):
+        if principal != "operator":
+            raise HTTPException(403)
+        if not isinstance(value, dict) or set(value) != {"binding", "approve"} or type(value["approve"]) is not bool:
+            raise HTTPException(422)
+        state='approved' if value['approve'] else 'denied'
+        with self.store.tx() as db:
+            row=db.execute('SELECT * FROM approvals WHERE run_id=?',(run_id,)).fetchone()
+            if not row: raise HTTPException(404)
+            if row['binding']!=value['binding'] or row['state'] not in ('pending',state): raise HTTPException(409,'Approval conflict')
+            if row['state']=='pending':
+                if value['approve'] and json.loads(row['preview']).get('quote'):
+                    try: Quote.model_validate(json.loads(row['preview'])['quote']).valid()
+                    except ValueError: raise HTTPException(409,'Quote expired; submit a new request for renewed approval') from None
+                db.execute('UPDATE approvals SET state=?,decided_at=?,decided_by=? WHERE run_id=?',(state,now(),'operator',run_id))
+                db.execute("UPDATE runs SET response=NULL,status='queued' WHERE id=?",(run_id,))
+                self.store.event('approval.'+state,'operator','buyer',db=db,trace_id=run_id,order_id=run_id)
+        return {"run_id": run_id, "state": state}
+
     def application(self):
         @asynccontextmanager
         async def lifespan(app):
@@ -336,20 +358,9 @@ class Coordinator:
             if request.state.principal!='operator': raise HTTPException(403)
             value=await request.json()
             if not isinstance(value,dict) or set(value)!={'binding','approve'} or type(value['approve']) is not bool: raise HTTPException(422)
-            state='approved' if value['approve'] else 'denied'
-            with self.store.tx() as db:
-                row=db.execute('SELECT * FROM approvals WHERE run_id=?',(run_id,)).fetchone()
-                if not row: raise HTTPException(404)
-                if row['binding']!=value['binding'] or row['state'] not in ('pending',state): raise HTTPException(409,'Approval conflict')
-                if row['state']=='pending':
-                    if value['approve']:
-                        try: Quote.model_validate(json.loads(row['preview'])['quote']).valid()
-                        except ValueError: raise HTTPException(409,'Quote expired; submit a new request for renewed approval') from None
-                    db.execute('UPDATE approvals SET state=?,decided_at=?,decided_by=? WHERE run_id=?',(state,now(),'operator',run_id))
-                    db.execute("UPDATE runs SET response=NULL,status='queued' WHERE id=?",(run_id,))
-                    self.store.event('approval.'+state,'operator','buyer',db=db,trace_id=run_id,order_id=run_id)
+            result = self.decide(run_id, value, request.state.principal)
             self.schedule(run_id)
-            return {'run_id':run_id,'state':state}
+            return result
         @app.get('/integration/events')
         async def events(request:Request,after:int=0):
             read_allowed(request)

@@ -1,0 +1,71 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:leo:agent-exchange:lab-message:v1",
+  "title": "Agent Exchange rendezvous message",
+  "description": "Application payload carried in the single data part of an A2A SendMessage. The sender is authenticated by the receiving agent's per-receiver credential and must equal `sender`. Local Claude agents and future external agents (via MCP or webhook transport adapters) use the same envelope.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "message_id", "run_id", "sender", "recipient", "intent", "content", "evidence", "in_reply_to", "created_at", "causation"],
+  "properties": {
+    "schema_version": {"const": "agent-exchange.lab-message.v1"},
+    "message_id": {"type": "string", "format": "uuid"},
+    "run_id": {"type": "string", "format": "uuid"},
+    "sender": {"$ref": "#/$defs/agent"},
+    "recipient": {"$ref": "#/$defs/agent"},
+    "intent": {"enum": ["request", "inform", "correction", "answer"]},
+    "content": {"type": "string", "maxLength": 600},
+    "evidence": {"type": "array", "maxItems": 6, "items": {"$ref": "#/$defs/evidence"}},
+    "in_reply_to": {"type": ["string", "null"], "format": "uuid"},
+    "created_at": {"type": "string", "format": "date-time"},
+    "causation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["turn_id", "call_id", "brain"],
+      "properties": {
+        "turn_id": {"type": "string", "maxLength": 64},
+        "call_id": {"type": ["string", "null"], "maxLength": 64},
+        "brain": {"enum": ["claude-cli", "fixture", "external"]}
+      }
+    }
+  },
+  "$defs": {
+    "agent": {"type": "string", "pattern": "^[a-z][a-z0-9-]{1,39}$"},
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["evidence_id", "key", "value", "unit", "origin", "lineage", "digest"],
+      "properties": {
+        "evidence_id": {"type": "string", "maxLength": 24},
+        "key": {"type": "string", "pattern": "^[a-z][a-z0-9_]{1,47}$"},
+        "value": {"type": ["number", "string"], "maxLength": 200},
+        "unit": {"type": "string", "maxLength": 16},
+        "origin": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["agent", "kind", "fact_id"],
+          "properties": {
+            "agent": {"$ref": "#/$defs/agent"},
+            "kind": {"enum": ["initial", "operator", "received", "derived"]},
+            "fact_id": {"type": "string", "maxLength": 24}
+          }
+        },
+        "lineage": {"type": "array", "maxItems": 24, "items": {"$ref": "#/$defs/hop"}},
+        "digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+      }
+    },
+    "hop": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["agent", "fact_id", "kind"],
+      "properties": {
+        "agent": {"$ref": "#/$defs/agent"},
+        "fact_id": {"type": "string", "maxLength": 24},
+        "kind": {"enum": ["initial", "operator", "received", "derived"]},
+        "from": {"$ref": "#/$defs/agent"},
+        "message_id": {"type": "string", "format": "uuid"},
+        "depends_on": {"type": "array", "maxItems": 8, "items": {"type": "string", "maxLength": 24}},
+        "at": {"type": "string", "format": "date-time"}
+      }
+    }
+  }
+}

@@ -7,7 +7,7 @@ from exchange.common import config, init_config
 
 def main():
     parser = argparse.ArgumentParser(description="Local Agent Exchange")
-    parser.add_argument("command", choices=["init", "up", "down", "status", "serve", "supervise", "demo", "showcase", "browser-check", "test", "preflight", "live-pilot", "benchmark", "report", "mcp", "sdk-check", "testnet-init", "testnet", "restart-check", "live-safety", "match-sim"])
+    parser.add_argument("command", choices=["init", "up", "down", "status", "serve", "supervise", "demo", "showcase", "browser-check", "test", "preflight", "live-pilot", "benchmark", "report", "mcp", "sdk-check", "testnet-init", "testnet", "restart-check", "live-safety", "match-sim", "lab", "lab-campaign", "lab-report"])
     parser.add_argument("peer", nargs="?")
     parser.add_argument("--owner")
     parser.add_argument("--base-port", type=int, default=8710)
@@ -18,9 +18,17 @@ def main():
     parser.add_argument('--provider', choices=['fixture', 'claude'], default='fixture', help='match-sim agents; claude makes live model calls')
     parser.add_argument('--budget', type=int, default=0, help='hard model-call budget for match-sim --provider claude')
     parser.add_argument('--dev', action='store_true', help='match-sim on development seeds only; unscored, writes nothing')
+    parser.add_argument('--mode', choices=['isolated', 'communication', 'intervention'], default='communication', help='lab condition A, B or C')
+    parser.add_argument('--trial', choices=['fixed', 'random'], default='fixed', help='lab inputs: 120 W / 21 C / 0.18 K/W, or fresh seeded values')
+    parser.add_argument('--seed', type=int, help='lab: reuse a random trial seed (matched inputs)')
+    parser.add_argument('--brain', choices=['fixture', 'claude'], default='fixture', help='lab agent brains; claude makes live CLI calls')
+    parser.add_argument('--approve-live', action='store_true', help='lab: explicit operator approval for live Claude calls (max 12 per run)')
+    parser.add_argument('--freeze', action='store_true', help='lab-campaign: freeze the plan and seeds without running')
     args = parser.parse_args()
     if args.command == "init":
-        c = init_config(args.base_port)
+        init_config(args.base_port)
+        from exchange.lab_config import ensure_lab_config
+        c = ensure_lab_config()
         result = {"configured": list(c["peers"]), "dashboard": c["peers"]["observer"]["url"]}
     elif args.command in ["up", "down", "status", "serve", "supervise"]:
         from exchange import processes
@@ -58,6 +66,15 @@ def main():
         from exchange.match_sim import match_sim
         print(match_sim(args.provider, args.budget, args.dev))
         return
+    elif args.command == "lab":
+        from exchange.lab_cli import lab_run
+        result = lab_run(args.mode, args.trial, args.seed, args.brain, args.approve_live)
+    elif args.command == "lab-campaign":
+        from exchange.lab_cli import campaign, freeze
+        result = freeze() if args.freeze else campaign(args.approve_live)
+    elif args.command == "lab-report":
+        from exchange.lab_cli import report
+        result = report()
     elif args.command == "restart-check":
         from exchange.runtime_check import restart_check
         result = restart_check(args.crash)

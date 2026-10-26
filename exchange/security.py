@@ -60,10 +60,11 @@ class NetworkPolicy:
 
 class Guard:
     """ASGI body bounds and per-receiver credentials, before SDK parsing."""
-    def __init__(self, app, peer, public=(), store=None, public_prefixes=()):
+    def __init__(self, app, peer, public=(), store=None, public_prefixes=(), quiet_prefixes=()):
         self.app, self.peer, self.store = app, peer, store
         self.public = frozenset(public) | {"/health", "/.well-known/agent-card.json"}
         self.public_prefixes = public_prefixes
+        self.quiet_prefixes = tuple(quiet_prefixes)
 
     async def __call__(self, scope, receive, send):
         if scope["type"] != "http":
@@ -116,7 +117,8 @@ class Guard:
         with trace_scope(safe_id(headers.get('x-trace-id')), parent_id=safe_id(headers.get('x-parent-span'))) as context:
             scope['state']['trace'] = context
             # Reading observation endpoints must not manufacture more observed traffic.
-            recorded = self.store and scope['path'] not in ('/health','/observe','/snapshot','/','/app.js','/style.css','/.well-known/agent-card.json')
+            recorded = self.store and scope['path'] not in ('/health','/observe','/snapshot','/','/app.js','/style.css','/.well-known/agent-card.json') \
+                and not (self.quiet_prefixes and scope['method'] == 'GET' and scope['path'].startswith(self.quiet_prefixes))
             fields = {**context, 'method':scope['method'], 'path':scope['path'][:180]}
             started = time.monotonic()
             if recorded:
