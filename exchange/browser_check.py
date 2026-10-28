@@ -18,7 +18,7 @@ async def browser_check():
         try:
             await context.route('**/*',lambda route:route.continue_() if route.request.url.startswith(origin+'/') else route.abort())
             page=context.pages[0];page.on('pageerror',lambda e:errors.append(str(e)))
-            await page.goto(origin)
+            await page.goto(origin.rstrip('/') + '/admin')
             await page.get_by_label('Operator token').fill(c['peers']['observer']['tokens']['operator'])
             await page.get_by_role('button',name='Connect',exact=True).click()
             await expect(page.locator('#workspace')).to_be_visible()
