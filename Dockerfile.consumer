@@ -1,0 +1,12 @@
+FROM python:3.12-slim
+WORKDIR /app
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 EXCHANGE_DATA_DIR=/data HOST=0.0.0.0 PORT=8715
+COPY requirements-consumer.txt /app/requirements-consumer.txt
+RUN pip install --no-cache-dir -r requirements-consumer.txt
+COPY exchange/consumer.py exchange/consumer_mcp.py /app/exchange/
+COPY exchange/__init__.py /app/exchange/__init__.py
+COPY exchange/static/consumer.html exchange/static/consumer.css exchange/static/consumer.js /app/exchange/static/
+RUN useradd -r -u 10001 -d /app exchange && mkdir -p /data && chown -R exchange:exchange /data /app
+USER exchange
+EXPOSE 8715
+CMD ["python", "-m", "exchange.consumer", "serve", "--host", "0.0.0.0"]
