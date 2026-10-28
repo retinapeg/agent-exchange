@@ -45,7 +45,7 @@ Requires Python 3.12+ and `uv`. Everything installed by these commands is reposi
 ./exchange.sh test
 ```
 
-Open **http://127.0.0.1:8715**. Log in with
+Open the legacy observatory at **http://127.0.0.1:8715/admin**. Log in with
 `peers.observer.tokens.operator` from ignored `local_data/config.json`. The dashboard shows
 observed agents, tasks, artifacts, verification, quotes, ledger state and event timelines.
 Use **New task** to submit a document or CSV. Requirements can run through real CLI models;
