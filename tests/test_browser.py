@@ -22,7 +22,7 @@ async def test_actual_desktop_mobile_dashboard(tmp_path, monkeypatch):
             await context.route('**/*', lambda route: route.continue_() if route.request.url.startswith(c['peers']['observer']['url'] + '/') else route.abort())
             page = context.pages[0]
             page.on('pageerror', lambda error: errors.append(str(error)))
-            await page.goto(c['peers']['observer']['url'])
+            await page.goto(c['peers']['observer']['url'].rstrip('/') + '/admin')
             await expect(page.locator('#login')).to_be_visible()
             await page.get_by_label('Operator token').fill(c['peers']['observer']['tokens']['operator'])
             await page.get_by_role('button',name='Connect',exact=True).click()
