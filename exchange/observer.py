@@ -70,7 +70,12 @@ def make_observer(c):
 
     @app.get("/")
     async def index():
-        return FileResponse(Path(__file__).parent / "static" / "index.html", headers={"Content-Security-Policy": "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'"})
+        # The public experience is the consumer product, not the operator observatory.
+        return FileResponse(Path(__file__).parent / "static" / "consumer.html")
+
+    @app.get("/admin")
+    async def admin_index():
+        return FileResponse(Path(__file__).parent / "static" / "index.html")
 
     @app.get("/app.js")
     async def script():
@@ -175,5 +180,9 @@ def make_observer(c):
     # Session-authenticated actions are public to the bearer guard only; each
     # route still checks the HttpOnly operator session and same-origin Host/Origin.
     # Lab routes check the operator session (or operator bearer) themselves; polling reads are not logged.
-    return Guard(app, peer, public=["/", "/app.js", "/style.css", "/lab.js", "/lab.css", "/session", "/snapshot", "/logout",'/submit'],
-                 public_prefixes=('/approvals/','/runs/','/lab/'),store=adapter,quiet_prefixes=('/lab/',))
+    # A self-contained, session-authenticated consumer app. All legacy APIs stay at
+    # their existing paths; only the legacy dashboard moves to /admin.
+    from exchange.consumer import create_app
+    app.mount("/", create_app(path=DATA / "consumer.sqlite"))
+    return Guard(app, peer, public=["/", "/admin", "/consumer.css", "/consumer.js", "/app.js", "/style.css", "/lab.js", "/lab.css", "/session", "/snapshot", "/logout",'/submit'],
+                 public_prefixes=('/api/','/approvals/','/runs/','/lab/'),store=adapter,quiet_prefixes=('/api/','/lab/',))

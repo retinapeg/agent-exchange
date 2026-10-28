@@ -1,0 +1,22 @@
+services:
+  - type: web
+    name: agent-exchange-alpha
+    runtime: docker
+    dockerfilePath: ./Dockerfile.consumer
+    plan: starter
+    healthCheckPath: /health
+    envVars:
+      - key: EXCHANGE_DATA_DIR
+        value: /data
+      - key: EXCHANGE_MATCH_THRESHOLD
+        value: '75'
+      - key: EXCHANGE_MIN_COHORT
+        value: '15'
+      - key: EXCHANGE_SECURE_COOKIES
+        value: '1'
+      - key: EXCHANGE_PUBLIC_ORIGIN
+        sync: false
+    disk:
+      name: agent-exchange-data
+      mountPath: /data
+      sizeGB: 1

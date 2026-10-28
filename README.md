@@ -1,5 +1,28 @@
 # Agent Exchange
 
+**Product status: consumer matchmaking alpha.** The front door is now a consent-first human matching application. The old developer observatory lives at `/admin` when the legacy multi-service stack is running.
+
+## Start the actual product
+
+```sh
+cd ~/Projects/agent-exchange
+./consumer.sh serve
+# Open http://127.0.0.1:8715
+```
+
+To try a real 20-person matchmaking demonstration in a separate synthetic-only database:
+
+```sh
+EXCHANGE_DEMO=1 ./consumer.sh seed-demo
+EXCHANGE_DEMO=1 ./consumer.sh serve
+```
+
+Read **[CONSUMER_README.md](CONSUMER_README.md)** for the user journey, scoring, consent, tests, MCP adapter, hosting and privacy limitations. The standalone consumer app does not need the A2A/observer stack.
+
+---
+
+## Historical experimental A2A / observatory implementation
+
 A local network where agents discover services, delegate useful work, return traceable
 artifacts and optionally pay simulated credits. The buyer verifies the result against its
 source. A completed task, a valid signature and a useful result are three different things.
@@ -22,7 +45,7 @@ Requires Python 3.12+ and `uv`. Everything installed by these commands is reposi
 ./exchange.sh test
 ```
 
-Open **http://127.0.0.1:8715**. Log in with
+Open the legacy observatory at **http://127.0.0.1:8715/admin**. Log in with
 `peers.observer.tokens.operator` from ignored `local_data/config.json`. The dashboard shows
 observed agents, tasks, artifacts, verification, quotes, ledger state and event timelines.
 Use **New task** to submit a document or CSV. Requirements can run through real CLI models;

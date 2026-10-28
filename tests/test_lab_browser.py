@@ -21,7 +21,7 @@ async def test_lab_pause_inject_resume_replay_in_chrome(tmp_path, monkeypatch):
             await context.route('**/*', lambda route: route.continue_() if route.request.url.startswith(c['peers']['observer']['url'] + '/') else route.abort())
             page = context.pages[0]
             page.on('pageerror', lambda error: errors.append(str(error)))
-            await page.goto(c['peers']['observer']['url'])
+            await page.goto(c['peers']['observer']['url'].rstrip('/') + '/admin')
             await page.get_by_label('Operator token').fill(c['peers']['observer']['tokens']['operator'])
             await page.get_by_role('button', name='Connect', exact=True).click()
             await expect(page.locator('#lab')).to_be_visible()
