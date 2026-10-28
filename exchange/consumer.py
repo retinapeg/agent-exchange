@@ -21,6 +21,7 @@ import time
 from typing import Any
 from uuid import uuid4
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+from urllib.parse import urlsplit
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse
@@ -35,6 +36,44 @@ EMAIL = re.compile(r'^[^\s@]+@[^\s@]+\.[^\s@]+$')
 PII = re.compile(r'[^\s@]+@[^\s@]+\.[^\s@]+|(?:\+?\d[\d\s()\-]{8,}\d)', re.I)
 ALLOWED_TAG = re.compile(r'^[a-z0-9][a-z0-9 +.#/\-]{0,39}$')
 COOKIE = 'ae_session'
+LINKEDIN_HANDLE = re.compile(r'^[A-Za-z0-9][A-Za-z0-9_-]{1,99}$')
+
+
+def validate_linkedin_url(value: Any) -> str | None:
+    """Accept only an explicitly supplied personal LinkedIn profile URL; never scrape LinkedIn."""
+    if value in (None, ''):
+        return None
+    if not isinstance(value, str) or len(value) > 220:
+        raise HTTPException(422, 'Enter a valid personal LinkedIn profile link')
+    parsed = urlsplit(value.strip())
+    if (parsed.scheme != 'https' or parsed.netloc.lower() not in ('linkedin.com', 'www.linkedin.com')
+            or parsed.query or parsed.fragment):
+        raise HTTPException(422, 'Use your https://www.linkedin.com/in/... profile link')
+    parts = [part for part in parsed.path.strip('/').split('/') if part]
+    if len(parts) != 2 or parts[0] != 'in' or not LINKEDIN_HANDLE.fullmatch(parts[1]):
+        raise HTTPException(422, 'Use a personal LinkedIn profile link ending /in/your-name')
+    return 'https://www.linkedin.com/in/' + parts[1]
+
+
+def collaboration_ideas(a: dict, b: dict) -> list[str]:
+    """Ground suggested collaborations in approved context; never infer private traits."""
+    interests = sorted(set(a.get('interests', [])) & set(b.get('interests', [])))
+    goals = sorted(set(a.get('goals', [])) & set(b.get('goals', [])))
+    offers_a = sorted(set(a.get('offers', [])) & set(b.get('seeks', [])))
+    offers_b = sorted(set(b.get('offers', [])) & set(a.get('seeks', [])))
+    ideas = []
+    if interests and goals:
+        ideas.append(f'Try a small {interests[0]} collaboration towards your shared goal: {goals[0]}.')
+    if offers_a or offers_b:
+        skills = ', '.join(sorted(set(offers_a + offers_b))[:2])
+        ideas.append(f'Pair up on a short project where you can exchange strengths in {skills}.')
+    if goals:
+        ideas.append(f'Compare your approaches to {goals[0]} and choose one small experiment to do together.')
+    if interests and len(ideas) < 3:
+        ideas.append(f'Explore a joint idea related to {interests[0]}.')
+    if not ideas:
+        ideas.append('Share one project idea each and explore whether a collaboration makes sense.')
+    return list(dict.fromkeys(ideas))[:3]
 
 
 def now() -> float:
@@ -133,11 +172,12 @@ def score_pair(a: dict, b: dict) -> dict:
     if tz >= 0.6:
         reasons.append('Reasonable timezone overlap')
     return {'score': score, 'components': points, 'reasons': reasons[:5],
+            'project_ideas': collaboration_ideas(a, b),
             'disclaimer': 'Heuristic compatibility score, not a probability or guarantee.'}
 
 
 class Engine:
-    def __init__(self, path: Path, *, threshold: int = 75, min_cohort: int = 15, quiet_seconds: float = 3):
+    def __init__(self, path: Path, *, threshold: int = 75, min_cohort: int = 2, quiet_seconds: float = 1):
         if not 0 <= threshold <= 100 or not 2 <= min_cohort <= 10000 or quiet_seconds < 0:
             raise ValueError('Invalid match settings')
         self.path = Path(path)
@@ -158,6 +198,10 @@ class Engine:
                 CREATE TABLE IF NOT EXISTS profiles (
                     user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
                     profile TEXT NOT NULL, shared TEXT NOT NULL, joined REAL NOT NULL);
+                CREATE TABLE IF NOT EXISTS contact_preferences (
+                    user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+                    linkedin_url TEXT, share_linkedin_on_match INTEGER NOT NULL DEFAULT 0,
+                    CHECK(share_linkedin_on_match IN (0, 1)));
                 CREATE TABLE IF NOT EXISTS drafts (
                     user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
                     profile TEXT NOT NULL, shared TEXT NOT NULL);
@@ -271,6 +315,19 @@ class Engine:
             db.execute("INSERT INTO meta VALUES('last_join',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", (str(now()),))
         return {'joined': True, 'shared': shared, 'threshold': self.threshold}
 
+    def set_contact(self, user: str, linkedin_url: Any, share_on_match: Any) -> dict:
+        if type(share_on_match) is not bool:
+            raise HTTPException(422, 'Explicitly choose whether your LinkedIn profile can be shared')
+        url = validate_linkedin_url(linkedin_url)
+        if share_on_match and not url:
+            raise HTTPException(422, 'Supply your LinkedIn URL before enabling sharing')
+        with self.connect() as db:
+            db.execute('''INSERT INTO contact_preferences(user_id,linkedin_url,share_linkedin_on_match)
+                          VALUES(?,?,?) ON CONFLICT(user_id) DO UPDATE SET
+                          linkedin_url=excluded.linkedin_url, share_linkedin_on_match=excluded.share_linkedin_on_match''',
+                       (user, url, int(share_on_match)))
+        return {'linkedin_url': url, 'share_linkedin_on_match': share_on_match}
+
     def status(self, user: str) -> dict:
         with self.connect() as db:
             owner = db.execute('SELECT id,name,email FROM users WHERE id=?', (user,)).fetchone()
@@ -280,23 +337,52 @@ class Engine:
             draft = db.execute('SELECT profile,shared FROM drafts WHERE user_id=?', (user,)).fetchone()
             waiting = db.execute('''SELECT COUNT(*) FROM profiles p
                                     WHERE NOT EXISTS (SELECT 1 FROM active_members m WHERE m.user_id=p.user_id)''').fetchone()[0]
-            membership = db.execute('''SELECT mt.*,u.name as partner_name,u.email as partner_email
+            membership = db.execute('''SELECT mt.*,u.name as partner_name,u.email as partner_email,
+                       cp.linkedin_url as partner_linkedin,cp.share_linkedin_on_match,
+                       p.profile as partner_approved_profile
                 FROM active_members mm JOIN matches mt ON mt.id=mm.match_id
                 JOIN users u ON u.id=(CASE WHEN mt.a=? THEN mt.b ELSE mt.a END)
+                LEFT JOIN contact_preferences cp ON cp.user_id=u.id
+                LEFT JOIN profiles p ON p.user_id=u.id
                 WHERE mm.user_id=?''', (user, user)).fetchone()
+            contact = db.execute('SELECT linkedin_url,share_linkedin_on_match FROM contact_preferences WHERE user_id=?',
+                                 (user,)).fetchone()
+            # The initial two-person test returns the same reciprocal compatibility
+            # score even if it does not qualify as an exclusive match.
+            preview = None
+            if not membership and profile:
+                candidates = db.execute('''SELECT p.user_id,p.profile,u.name FROM profiles p
+                    JOIN users u ON u.id=p.user_id
+                    WHERE p.user_id!=? AND NOT EXISTS(
+                        SELECT 1 FROM active_members mm WHERE mm.user_id=p.user_id)
+                    ORDER BY p.joined,p.user_id LIMIT 2''', (user,)).fetchall()
+                if len(candidates) == 1 and waiting == 2:
+                    other = candidates[0]
+                    result = score_pair(json.loads(profile['profile']), json.loads(other['profile']))
+                    if result['score'] < self.threshold:
+                        preview = {'partner_name': other['name'], 'score': result['score'],
+                                   'explanation': result, 'qualified_match': False}
+
         payload = {'id': owner['id'], 'name': owner['name'], 'email': owner['email'],
                    'joined': profile is not None, 'profile': json.loads(profile['profile']) if profile else None,
                    'draft': json.loads(draft['profile']) if draft else None,
                    'draft_fields': json.loads(draft['shared']) if draft else None,
                    'waiting_count': waiting, 'minimum_cohort': self.min_cohort, 'threshold': self.threshold,
-                   'match': None}
+                   'contact': {'linkedin_url': contact['linkedin_url'],
+                               'share_linkedin_on_match': bool(contact['share_linkedin_on_match'])}
+                              if contact else {'linkedin_url': None, 'share_linkedin_on_match': False},
+                   'compatibility_preview': preview, 'match': None}
         if membership:
             accepted = bool(membership['accepted_a'] and membership['accepted_b'])
             payload['match'] = {'id': membership['id'], 'partner_name': membership['partner_name'],
                                 'score': membership['score'], 'explanation': json.loads(membership['rationale']),
                                 'state': 'accepted' if accepted else 'pending-mutual-acceptance',
                                 'my_accepted': bool(membership['accepted_a'] if user == membership['a'] else membership['accepted_b']),
-                                'partner_email': membership['partner_email'] if accepted else None}
+                                'partner_email': membership['partner_email'] if accepted else None,
+                                'partner_linkedin': membership['partner_linkedin']
+                                  if membership['share_linkedin_on_match'] else None,
+                                'partner_context': json.loads(membership['partner_approved_profile'])
+                                  if membership['partner_approved_profile'] else {}}
         return payload
 
     def match_round(self, *, force: bool = False) -> dict:
@@ -378,6 +464,7 @@ class Engine:
             db.execute('DELETE FROM api_tokens WHERE user_id=?', (user,))
             db.execute('DELETE FROM drafts WHERE user_id=?', (user,))
             db.execute('DELETE FROM profiles WHERE user_id=?', (user,))
+            db.execute('DELETE FROM contact_preferences WHERE user_id=?', (user,))
             # Legacy matches retain anonymized IDs for integrity; user contact/name are erased.
             db.execute("UPDATE users SET name='Deleted participant', email=?, salt='', password_hash='' WHERE id=?",
                        ('deleted-' + user + '@example.invalid', user))
@@ -411,8 +498,8 @@ def create_app(*, path: str | Path | None = None, threshold: int | None = None,
                demo: bool | None = None) -> FastAPI:
     db_path = Path(path) if path else DATA / ('consumer_demo.sqlite' if os.getenv('EXCHANGE_DEMO') == '1' else 'consumer.sqlite')
     engine = Engine(db_path, threshold=int(threshold if threshold is not None else os.getenv('EXCHANGE_MATCH_THRESHOLD', '75')),
-                    min_cohort=int(min_cohort if min_cohort is not None else os.getenv('EXCHANGE_MIN_COHORT', '15')),
-                    quiet_seconds=float(quiet_seconds if quiet_seconds is not None else os.getenv('EXCHANGE_QUIET_SECONDS', '3')))
+                    min_cohort=int(min_cohort if min_cohort is not None else os.getenv('EXCHANGE_MIN_COHORT', '2')),
+                    quiet_seconds=float(quiet_seconds if quiet_seconds is not None else os.getenv('EXCHANGE_QUIET_SECONDS', '1')))
     demo = (os.getenv('EXCHANGE_DEMO') == '1') if demo is None else demo
     public_origin = os.getenv('EXCHANGE_PUBLIC_ORIGIN', '').rstrip('/')
     secure_cookies = os.getenv('EXCHANGE_SECURE_COOKIES', '0') == '1'
@@ -534,6 +621,16 @@ def create_app(*, path: str | Path | None = None, threshold: int | None = None,
             raise HTTPException(403, 'MCP may stage drafts only; the participant must approve in the browser')
         return engine.submit(user, data.get('profile'), data.get('approved_fields'), data.get('consent'))
 
+    @app.post('/api/contact')
+    async def update_contact(request: Request):
+        user = owner(request)
+        data = await body(request)
+        if set(data) != {'linkedin_url', 'share_on_match'}:
+            raise HTTPException(422, 'Only a LinkedIn URL and sharing permission may be supplied')
+        if request.headers.get('authorization', '').startswith('Bearer '):
+            raise HTTPException(403, 'Changing LinkedIn disclosure requires a browser session')
+        return engine.set_contact(user, data['linkedin_url'], data['share_on_match'])
+
     @app.get('/api/me')
     def me(request: Request):
         user = owner(request)
@@ -628,7 +725,7 @@ def main():
         if os.getenv('EXCHANGE_DEMO') != '1':
             raise SystemExit('Set EXCHANGE_DEMO=1 to seed an isolated synthetic-only database.')
         engine = Engine(DATA / 'consumer_demo.sqlite', threshold=int(os.getenv('EXCHANGE_MATCH_THRESHOLD', '75')),
-                        min_cohort=int(os.getenv('EXCHANGE_MIN_COHORT', '15')))
+                        min_cohort=int(os.getenv('EXCHANGE_MIN_COHORT', '2')))
         print(json.dumps(seed_demo(engine), indent=2))
         return
     import uvicorn
