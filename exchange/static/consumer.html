@@ -17,7 +17,9 @@
     <section class="hero">
       <div class="eyebrow"><span class="live-dot"></span> YOUR CONTEXT. YOUR CHOICE. YOUR CONNECTION.</div>
       <h1>Find someone <em>worth building with.</em></h1>
-      <p class="lead">Your AI knows what you're working towards. Share only the parts you choose, then find one person whose goals, interests and skills genuinely complement yours.</p>
+      <p class="lead">Join with your AI. Approve what it shares once, then let Agent Exchange find one person whose goals and interests complement yours.</p>
+      <button id="join-cta" class="primary hero-join" type="button">Join the pool</button>
+      <p class="hero-note">Matching starts with two people. Your AI helps prepare the context; you approve what it shares.</p>
       <div class="hero-features"><span>One match at a time</span><span>Clear compatibility scores</span><span>Private by default</span></div>
     </section>
 
@@ -27,8 +29,8 @@
       <div class="panel auth-panel">
         <p class="overline">STEP 01 / GET STARTED</p>
         <h2>Enter the exchange</h2>
-        <p>Create an account to join the next matching cohort. No developer tokens, no setup ceremony.</p>
-        <div class="switch" role="group" aria-label="Account access"><button id="register-tab" class="selected" type="button">Join the network</button><button id="login-tab" type="button">Sign in</button></div>
+        <p>Join the pool. Your assistant can prepare the context, and you decide what to share.</p>
+        <div class="switch" role="group" aria-label="Account access"><button id="register-tab" class="selected" type="button">Join the pool</button><button id="login-tab" type="button">Sign in</button></div>
         <form id="auth-form">
           <label id="name-label">Name to show your match<input id="name" autocomplete="nickname" minlength="2" maxlength="48" placeholder="How should they know you?" required></label>
           <label>Your email<input id="email" type="email" autocomplete="email" placeholder="you@example.com" required></label>
@@ -41,16 +43,17 @@
         <div class="orbit"><span class="orbit-center">YOU</span><i class="o o1"></i><i class="o o2"></i><i class="o o3"></i><i class="o o4"></i><i class="o o5"></i><i class="o o6"></i></div>
         <h3>Not a directory of strangers.</h3>
         <p>We compare goals, interests, complementary abilities and working preferences. Then we find the strongest mutually eligible pairs across the pool.</p>
-        <div class="metric-pair"><div><strong id="cohort-stat">15+</strong><span>Minimum cohort</span></div><div><strong id="threshold-stat">75</strong><span>Score threshold</span></div></div>
+        <div class="metric-pair"><div><strong id="cohort-stat">2</strong><span>People needed to start</span></div><div><strong id="threshold-stat">75</strong><span>Score threshold</span></div></div>
       </aside>
     </section>
 
     <section id="profile-screen" class="panel profile-panel" hidden>
-      <p class="overline">STEP 02 / CHOOSE WHAT TO SHARE</p>
-      <h2>Build your matching profile</h2>
-      <p>Ask your GPT to draft this profile from what it already knows, or fill it in yourself. <strong>Do not paste raw chat transcripts.</strong> You control exactly which fields leave this screen.</p>
-      <div class="draft-help"><div><h3>Use your AI assistant</h3><p>Copy this request into ChatGPT or Claude, then paste its JSON response below. Review everything before approving.</p></div><button id="copy-prompt" class="outline" type="button">Copy AI prompt</button></div>
-      <details class="json-import"><summary>Paste an AI-drafted JSON profile</summary><textarea id="json-draft" rows="5" spellcheck="false" placeholder='{"interests":["agent reliability"],"goals":["ship evaluation tools"],"offers":["python"],"seeks":["product design"],"style":"collaborative","timezone":"Europe/London"}'></textarea><button id="import-json" type="button" class="outline">Use this draft</button></details>
+      <p class="overline">STEP 02 / YOUR AI PREPARES THE INTRODUCTION</p>
+      <h2>Bring what your GPT already knows.</h2>
+      <p>No questionnaire. Your GPT can write a short, relevant summary from the context it has. You approve the summary before it joins the pool. <strong>Never paste your conversation history.</strong></p>
+      <div class="draft-help"><div><h3>1. Ask your assistant</h3><p>Copy a prepared request, send it to your existing ChatGPT conversation, and let it summarise what it actually knows about your goals.</p></div><button id="copy-prompt" class="primary" type="button">Copy request for my GPT</button></div>
+      <div class="ai-import"><h3>2. Paste your GPT's response</h3><textarea id="json-draft" rows="6" spellcheck="false" aria-label="Paste your AI's approved-context draft" placeholder="Paste the complete response from ChatGPT here. You do not need to edit the technical formatting."></textarea><button id="import-json" type="button" class="primary">Review the summary</button><p class="fine-print">On supported MCP connections, the draft can arrive here automatically. Your assistant cannot authorise sharing without you.</p></div>
+      <details class="manual-profile"><summary>Advanced: adjust your AI's summary or enter it yourself</summary>
       <form id="profile-form">
         <div class="fields-grid">
           <label>Interests <span class="required">Required</span><input id="interests" required placeholder="AI agents, climate technology, open source"><small>Separate tags with commas, maximum eight.</small></label>
@@ -66,35 +69,56 @@
           <label><input type="checkbox" value="offers" checked> Skills I offer</label><label><input type="checkbox" value="seeks" checked> Skills I seek</label>
           <label><input type="checkbox" value="style" checked> Working style</label><label><input type="checkbox" value="timezone" checked> Time zone</label>
         </div>
-        <button class="primary" type="submit">Preview exactly what I'll share</button>
-      </form>
-      <section id="preview" class="preview" hidden><h3>Your approved profile</h3><p>Double-check this. These are the only fields Agent Exchange will store and compare.</p><pre id="preview-json"></pre><label class="consent"><input id="consent" type="checkbox"> I have reviewed the profile, authorise these fields to be used for matchmaking, and understand my approved fields may contribute to explanations for a suggested match.</label><button id="join-pool" type="button" class="primary" disabled>Approve and join the pool</button></section>
+        <button class="outline" type="submit">Review adjusted details</button>
+      </form></details>
+      <section id="preview" class="preview" hidden><h3>3. Approve what your AI will share</h3><p>Only this short summary is stored and compared. If it contains anything personal you do not want shared, edit it first.</p><pre id="preview-json"></pre>
+        <h3>Where should a match connect with you?</h3>
+        <label>Your LinkedIn profile (optional)<input id="linkedin-url" type="url" autocomplete="url" placeholder="https://www.linkedin.com/in/your-name"></label>
+        <label class="consent"><input id="share-linkedin" type="checkbox"> If I get a qualifying match, share my LinkedIn profile with that person automatically. I can turn this off later.</label>
+        <p class="fine-print">Otherwise, your email is revealed only after you both accept the introduction. We do not search or scrape LinkedIn members.</p>
+        <label class="consent"><input id="consent" type="checkbox"> I agree to join this friends-only alpha. I authorise Agent Exchange to compare these approved details with other participants and show relevant shared details in our compatibility results. Contact information is shared only under the contact option I choose above.</label>
+        <button id="join-pool" type="button" class="primary" disabled>Approve and enter the pool</button></section>
     </section>
 
     <section id="waiting-screen" class="panel state-panel" hidden>
       <p class="overline">STEP 03 / MATCHING</p><span class="status-orb">◎</span>
       <h2 id="waiting-heading">You're in the pool.</h2>
-      <p id="waiting-text">Your profile is approved. We're gathering people for the next matching round.</p>
+      <p id="waiting-text">Your profile is approved. We're looking for compatible people already in the pool.</p>
       <div class="progress-track"><div id="pool-progress"></div></div>
       <p id="pool-caption" class="fine-print">Waiting for participants</p>
-      <p class="privacy-footnote">A match is only proposed above your cohort's minimum compatibility score. Your email remains private until you both accept.</p>
+      <p class="privacy-footnote">A confirmed match must clear the compatibility threshold. Your email stays private unless you both choose to connect. LinkedIn profiles appear automatically only when their owners opted in.</p>
       <button id="refresh" type="button" class="outline">Check for a match</button>
     </section>
 
     <section id="matched-screen" class="panel match-panel" hidden>
-      <p class="overline">YOUR ONE-TO-ONE MATCH</p><div class="match-score"><strong id="score">0</strong><span>/ 100 compatibility</span></div>
+      <p class="overline">YOU'VE GOT A MATCH!</p><div class="match-score"><strong id="score">0</strong><span>/ 100 compatibility</span></div>
       <h2 id="partner">Your match</h2><p id="match-state">Suggested connection</p>
       <h3>Why this person?</h3><ul id="explanations"></ul>
-      <p class="fine-print">This is an explainable heuristic score, not a probability or a prediction of friendship.</p>
+      <h3>What you might work on together</h3><ul id="match-ideas"></ul>
+      <div id="linkedin-card" class="contact-panel" hidden><h3>Connect on LinkedIn</h3><p>Your match chose to share their LinkedIn profile with confirmed matches.</p><a id="partner-linkedin" rel="noopener noreferrer" target="_blank">Open their LinkedIn profile</a></div>
+      <p class="fine-print">Compatibility is an explainable heuristic, not a prediction of friendship or future results.</p>
       <div id="match-actions"><button id="accept" class="primary" type="button">I'd like to connect</button><button id="decline" class="outline danger" type="button">Not for me</button></div>
       <div id="contact-card" hidden><h3>You both accepted</h3><p id="contact-info"></p><p class="fine-print">Contact details are revealed only after both participants accept.</p></div>
+    </section>
+
+    <section id="compatibility-screen" class="panel match-panel" hidden>
+      <p class="overline">TWO-PERSON COMPATIBILITY PREVIEW</p><div class="match-score"><strong id="preview-score">0</strong><span>/ 100 compatibility</span></div>
+      <h2 id="preview-person">Compatibility report</h2><p>This score was shared with both participants. It is below the match threshold, so neither person is assigned a match or given contact details.</p>
+      <h3>What you have in common</h3><ul id="preview-reasons"></ul>
+      <h3>What you could try together</h3><ul id="preview-ideas"></ul>
+      <p class="fine-print">As more people join, the pool will continue searching for a qualifying match.</p>
+      <button id="preview-refresh" class="outline" type="button">Check for a match</button>
     </section>
 
     <section id="demo-screen" class="panel demo-panel" hidden>
       <p class="overline">ISOLATED TEST NETWORK / SYNTHETIC PROFILES</p><h2>See the matching engine work</h2><p>This list contains fictional test accounts only. The pairs are persisted results of the same matching algorithm the real app uses.</p><div class="demo-stats" id="demo-stats"></div><div id="demo-matches" class="demo-matches"></div>
     </section>
 
-    <section id="account-screen" class="panel account-panel" hidden><details><summary>Account, MCP integration and privacy controls</summary><p>Connect an MCP-capable desktop assistant with a personal API token. An assistant may draft a profile; only you can approve joining in the browser.</p><div class="account-actions"><button id="make-token" class="outline" type="button">Create MCP token</button><button id="revoke-tokens" class="subtle" type="button">Revoke all MCP tokens</button></div><pre id="token-output" hidden></pre><p class="fine-print">Keep tokens secret. Set <code>AGENT_EXCHANGE_TOKEN</code> and <code>AGENT_EXCHANGE_URL</code> in your MCP client's environment. Run <code>./consumer.sh mcp</code> from the project directory.</p><button id="delete-account" class="outline danger" type="button">Delete my account and profile</button></details></section>
+    <section id="account-screen" class="panel account-panel" hidden><details><summary>Account, MCP integration and privacy controls</summary><p>Connect an MCP-capable desktop assistant with a personal API token. An assistant may draft a profile; only you can approve joining in the browser.</p><div class="contact-settings"><h3>My LinkedIn contact preference</h3>
+        <label>LinkedIn profile URL<input id="edit-linkedin-url" type="url" placeholder="https://www.linkedin.com/in/your-name"></label>
+        <label class="consent"><input type="checkbox" id="edit-share-linkedin"> Share my LinkedIn profile when I receive a qualifying match.</label>
+        <button id="save-linkedin" class="outline" type="button">Save contact preference</button>
+        </div><div class="account-actions"><button id="make-token" class="outline" type="button">Create MCP token</button><button id="revoke-tokens" class="subtle" type="button">Revoke all MCP tokens</button></div><pre id="token-output" hidden></pre><p class="fine-print">Keep tokens secret. Set <code>AGENT_EXCHANGE_TOKEN</code> and <code>AGENT_EXCHANGE_URL</code> in your MCP client's environment. Run <code>./consumer.sh mcp</code> from the project directory.</p><button id="delete-account" class="outline danger" type="button">Delete my account and profile</button></details></section>
   </main>
   <footer><span>Agent Exchange · Private-by-design matchmaking</span><span>One person. A clear reason. Mutual choice.</span></footer>
 </body>

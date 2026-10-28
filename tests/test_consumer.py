@@ -221,3 +221,82 @@ async def test_20_concurrent_web_signups_and_approval(tmp_path):
     assert len(members)==20 and len(pairs)==10
     assert len({m['user_id'] for m in members})==20
     assert matches['created'] in (0,10)  # Can already have been matched by a polling request.
+
+
+def test_default_pool_starts_with_two_and_shows_project_ideas(tmp_path):
+    engine = Engine(tmp_path / 'two.sqlite', quiet_seconds=0)
+    assert engine.min_cohort == 2  # Fifteen was capacity, never a signup minimum.
+    a, _ = engine.register('Person One', 'one@demo.test', 'password-not-real')
+    b, _ = engine.register('Person Two', 'two@demo.test', 'password-not-real')
+    engine.submit(a, profile('open source', 'ship a product', 'python', 'design'), list(SHARE_FIELDS), True)
+    engine.submit(b, profile('open source', 'ship a product', 'design', 'python'), list(SHARE_FIELDS), True)
+    assert engine.match_round(force=True)['created'] == 1
+    sa, sb = engine.status(a)['match'], engine.status(b)['match']
+    assert sa['score'] == sb['score'] == 100
+    assert sa['explanation']['project_ideas']
+    assert sa['partner_context']['interests'] == ['open source']
+    assert sb['partner_context']['interests'] == ['open source']
+
+
+def test_two_people_see_score_even_below_matching_threshold(tmp_path):
+    engine = Engine(tmp_path / 'low.sqlite', quiet_seconds=0)
+    a, _ = engine.register('Person One', 'one@demo.test', 'password-not-real')
+    b, _ = engine.register('Person Two', 'two@demo.test', 'password-not-real')
+    engine.submit(a, profile('neuroscience', 'study cognition', 'python', 'statistics'), list(SHARE_FIELDS), True)
+    engine.submit(b, profile('community events', 'host local meetups', 'fundraising', 'operations'), list(SHARE_FIELDS), True)
+    assert engine.match_round(force=True)['created'] == 0
+    sa, sb = engine.status(a), engine.status(b)
+    assert sa['match'] is None and sb['match'] is None
+    assert sa['compatibility_preview']['score'] == sb['compatibility_preview']['score']
+    assert sa['compatibility_preview']['score'] < 75
+    assert sa['compatibility_preview']['qualified_match'] is False
+    assert sa['compatibility_preview']['explanation']['project_ideas']
+    assert sa['compatibility_preview'].get('partner_email') is None
+    assert sb['compatibility_preview'].get('partner_linkedin') is None
+
+
+def test_linkedin_contact_is_explicit_opt_in_and_can_be_revoked(tmp_path):
+    engine = Engine(tmp_path / 'links.sqlite', quiet_seconds=0)
+    a, _ = engine.register('Person One', 'one@demo.test', 'password-not-real')
+    b, _ = engine.register('Person Two', 'two@demo.test', 'password-not-real')
+    for user in (a, b):
+        engine.submit(user, profile('agent design', 'ship apps', 'python', 'product design'), list(SHARE_FIELDS), True)
+    with pytest.raises(HTTPException):
+        engine.set_contact(a, 'https://linkedin.com.evil.invalid/in/leo', True)
+    with pytest.raises(HTTPException):
+        engine.set_contact(a, 'javascript:alert(1)', True)
+    with pytest.raises(HTTPException):
+        engine.set_contact(a, '', True)
+    engine.set_contact(a, 'https://linkedin.com/in/alpha-person/', False)
+    engine.set_contact(b, 'https://www.linkedin.com/in/beta-person/', True)
+    engine.match_round(force=True)
+    assert engine.status(b)['match']['partner_linkedin'] is None
+    assert engine.status(a)['match']['partner_linkedin'] == 'https://www.linkedin.com/in/beta-person'
+    assert engine.status(a)['match']['partner_email'] is None
+    engine.set_contact(b, None, False)
+    assert engine.status(a)['match']['partner_linkedin'] is None
+    engine.set_contact(a, 'https://www.linkedin.com/in/alpha-person', True)
+    assert engine.status(b)['match']['partner_linkedin'] == 'https://www.linkedin.com/in/alpha-person'
+    engine.revoke(a)
+    assert engine.status(b)['match'] is None
+    with engine.connect() as c:
+        assert c.execute('SELECT 1 FROM contact_preferences WHERE user_id=?', (a,)).fetchone() is None
+
+
+@pytest.mark.asyncio
+async def test_contact_endpoint_is_owner_scoped_and_forbids_mcp_changes(tmp_path):
+    app = create_app(path=tmp_path / 'web-link.sqlite', quiet_seconds=0)
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url='http://testserver') as a, \
+               httpx.AsyncClient(transport=transport, base_url='http://testserver') as b:
+        await a.post('/api/register', json={'name':'Alpha Person','email':'alpha@demo.test','password':'long-password-test'})
+        await b.post('/api/register', json={'name':'Beta Person','email':'beta@demo.test','password':'long-password-test'})
+        r = await a.post('/api/contact',json={'linkedin_url':'https://www.linkedin.com/in/alpha-person','share_on_match':True})
+        assert r.status_code == 200
+        assert (await b.get('/api/me')).json()['contact']['linkedin_url'] is None
+        assert (await a.get('/api/me')).json()['contact']['linkedin_url'].endswith('/alpha-person')
+        token = (await a.post('/api/tokens')).json()['token']
+        async with httpx.AsyncClient(transport=transport, base_url='http://testserver', headers={'Authorization':'Bearer '+token}) as mcp:
+            assert (await mcp.post('/api/contact', json={'linkedin_url':None,'share_on_match':False})).status_code == 403
+        r = await a.post('/api/contact', json={'linkedin_url':'https://linkedin.com/in/abc','share_on_match':'yes'})
+        assert r.status_code == 422
